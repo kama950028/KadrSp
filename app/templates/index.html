@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Импорт преподавателей</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="container py-5">
+    <div class="card shadow">
+        <div class="card-header bg-primary text-white">
+            <h3 class="mb-0">Импорт преподавателей из .docx</h3>
+        </div>
+        <div class="card-body">
+            <!-- Форма загрузки файла -->
+            <div class="mb-4">
+                <input type="file" id="fileInput" class="form-control" accept=".docx">
+                <button onclick="uploadFile()" class="btn btn-success mt-2">Загрузить файл</button>
+            </div>
+            
+            <!-- Статус загрузки -->
+            <div id="status" class="alert alert-info" style="display: none;"></div>
+
+            <button onclick="clearDatabase()" class="btn btn-danger mt-3">Очистить БД</button>
+            <script>
+                async function clearDatabase() {
+                    if (!confirm("Вы уверены? Все данные будут удалены!")) return;
+                
+                    try {
+                        const response = await fetch('/admin/clear-db', {
+                            method: 'DELETE'
+                        });
+                        const result = await response.json();
+                        alert(result.message);
+                        location.reload(); // Обновляем страницу
+                    } catch (error) {
+                        alert("Ошибка: " + error.message);
+                    }
+                }
+                </script>
+            
+            <!-- Таблица преподавателей -->
+            <h4 class="mt-5 mb-3">Список преподавателей</h4>
+            <div id="teachersTable" class="table-responsive">
+                <table class="table table-striped">
+                    <thead>
+                        <tr>
+                            <th onclick="sortTeachersByName()" style="cursor: pointer; text-decoration: underline;">ФИО</th>
+                            <th>Должность</th>
+                            <th>Общий стаж</th>
+                            <th>Стаж преподавания</th>
+                            <th>Профессиональный стаж</th>
+                            <th>Уровень образования</th>
+                            <th>Учёная степень</th>
+                            <th>Учёное звание</th>
+                            <th>Преподаваемые дисциплины</th>
+                            <th>Квалификации</th>
+                            <th>Образовательные программы</th>
+                        </tr>
+                    </thead>
+                    <tbody id="teachersList"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="/static/js/app.js"></script>
+</body>
+</html>

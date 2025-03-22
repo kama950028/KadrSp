@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, Table
+from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, Table, Text
 from sqlalchemy.orm import relationship
 from app.database import Base
 
@@ -14,13 +14,13 @@ class Teacher(Base):
 
     teacher_id = Column(Integer, primary_key=True, index=True)
     full_name = Column(String(255), unique=True, nullable=False)
-    position = Column(String(100), nullable=False)
-    education_level = Column(String(100), nullable=False)
-    qualification = Column(String(100))
+    position = Column(String(255), nullable=False)
+    education_level = Column(Text, nullable=False)
+    qualification = Column(String(255))
     base_education_specialty = Column(String(255))
     scientific_education_specialty = Column(String(255))
-    academic_degree = Column(String(100))
-    academic_title = Column(String(100))
+    academic_degree = Column(String(255))  # Увеличиваем длину до 255 символов
+    academic_title = Column(String(255))  # Увеличиваем длину до 255 символов
     total_experience = Column(Integer)  # в годах
     teaching_experience = Column(Integer)
     professional_experience = Column(Integer)
@@ -39,10 +39,10 @@ class Qualification(Base):
     __tablename__ = "qualifications"
 
     qualification_id = Column(Integer, primary_key=True, index=True)
-    teacher_id = Column(Integer, ForeignKey('teachers.teacher_id', ondelete="CASCADE"), nullable=False)
-    course_name = Column(String(255), nullable=False)
+    program_name = Column(Text, nullable=False)  # Убедитесь, что этот атрибут существует
     year = Column(Integer, nullable=False)
 
+    teacher_id = Column(Integer, ForeignKey("teachers.teacher_id", ondelete="CASCADE"), nullable=False)
     teacher = relationship("Teacher", back_populates="qualifications", lazy="selectin")
 
 class Retraining(Base):
@@ -50,7 +50,7 @@ class Retraining(Base):
 
     retraining_id = Column(Integer, primary_key=True, index=True)
     teacher_id = Column(Integer, ForeignKey('teachers.teacher_id', ondelete="CASCADE"), nullable=False)
-    program_name = Column(String(255), nullable=False)
+    program_name = Column(Text, nullable=False)
     year = Column(Integer, nullable=False)
 
     teacher = relationship("Teacher", back_populates="retrainings", lazy="selectin")

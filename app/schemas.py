@@ -5,6 +5,9 @@ class QualificationBase(BaseModel):
     course_name: str
     year: int
 
+    class Config:
+        orm_mode = True
+
 class TeacherCreate(BaseModel):
     full_name: str
     position: str
