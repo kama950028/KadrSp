@@ -1,9 +1,12 @@
 from typing import List
 from sqlalchemy.orm import Session, joinedload
-from fastapi import APIRouter, Depends, HTTPException
-from app.models import Teacher, Qualification
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from app.models import Teacher, Qualification, Curriculum
+from app.services.import_utils import parse_excel, import_curriculum
 from app.schemas import TeacherCreate, TeacherResponse
 from app.database import get_db
+from typing import Optional
+import os
 
 
 router = APIRouter(prefix="/api", tags=["teachers"])
@@ -38,6 +41,7 @@ def get_teachers(db: Session = Depends(get_db)):
     teachers = db.query(Teacher).all()
     return [
         {
+            "teacher_id": teacher.teacher_id,
             "full_name": teacher.full_name,
             "position": teacher.position,
             "total_experience": teacher.total_experience,
@@ -59,3 +63,15 @@ def get_teacher(teacher_id: int, db: Session = Depends(get_db)):
     if not teacher:
         raise HTTPException(status_code=404, detail="Преподаватель не найден")
     return teacher
+
+
+
+
+
+@router.get("/curriculum")
+def get_curriculum(curriculum_id: Optional[int] = None, db: Session = Depends(get_db)):
+    if curriculum_id:
+        # Если указан curriculum_id, фильтруем по нему
+        return db.query(Curriculum).filter(Curriculum.curriculum_id == curriculum_id).all()
+    # Если program_id не указан, возвращаем все записи
+    return db.query(Curriculum).all()

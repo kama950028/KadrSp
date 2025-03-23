@@ -3,7 +3,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from app.database import get_db
-from app.services.import_utils import parse_docx, import_teachers
+from app.services.import_utils import parse_docx, import_teachers, parse_excel, import_curriculum
 import os
 import uuid
 
@@ -46,3 +46,25 @@ def process_import(file_path: str, db: Session):
         raise e
     finally:
         os.remove(file_path)
+
+@router.post("/upload-curriculum")
+async def upload_curriculum(
+    file: UploadFile = File(...), 
+    db: Session = Depends(get_db)
+):
+    if not file.filename.endswith('.xlsx'):
+        raise HTTPException(400, "Invalid file format")
+    
+    temp_file = f"temp_{file.filename}"
+    with open(temp_file, "wb") as buffer:
+        buffer.write(await file.read())
+    
+    try:
+        data = parse_excel(temp_file)
+        import_curriculum(db, data)
+    except Exception as e:
+        raise HTTPException(500, f"Import error: {str(e)}")
+    finally:
+        os.remove(temp_file)
+    
+    return {"message": f"Successfully imported {len(data)} records"}

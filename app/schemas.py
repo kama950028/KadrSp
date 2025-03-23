@@ -2,11 +2,11 @@ from pydantic import BaseModel
 from typing import List, Optional
 
 class QualificationBase(BaseModel):
-    course_name: str
+    program_name: str
     year: int
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class TeacherCreate(BaseModel):
     full_name: str
@@ -14,8 +14,9 @@ class TeacherCreate(BaseModel):
     education_level: str
     qualifications: List[QualificationBase] = []
 
-class TeacherResponse(TeacherCreate):
+class TeacherResponse(BaseModel):
     teacher_id: int
-
+    full_name: str
+    qualifications: List[QualificationBase]  # Убедитесь, что используется правильная схема
     class Config:
-        orm_mode = True  # Для работы с ORM объектами
+        from_attributes = True  # Для работы с ORM объектами

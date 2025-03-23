@@ -75,3 +75,23 @@ class TaughtDiscipline(Base):
     discipline_name = Column(String(255), nullable=False)
 
     teacher = relationship("Teacher", back_populates="disciplines", lazy="selectin")
+
+class Curriculum(Base):
+    __tablename__ = "curriculum"
+    
+    curriculum_id = Column(Integer, primary_key=True)
+    discipline = Column(String(255), nullable=False)
+    department = Column(String(255), nullable=False)
+    lecture_hours = Column(Integer)
+    practice_hours = Column(Integer)
+    exam_hours = Column(Integer)
+    test_hours = Column(Integer)
+    course_project_hours = Column(Integer)
+    total_practice_hours = Column(Integer)
+    program_id = Column(Integer, ForeignKey('education_programs.program_id'))
+
+    # Связь с программами
+    program = relationship("EducationProgram", back_populates="curriculum")
+
+# Добавить в EducationProgram
+EducationProgram.curriculum = relationship("Curriculum", back_populates="program")
