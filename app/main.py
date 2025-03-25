@@ -1,4 +1,6 @@
 from fastapi import FastAPI
+from fastapi.encoders import jsonable_encoder
+import math
 from app.routers import teachers, import_router, admin
 from app.database import engine, Base
 import asyncio
@@ -32,3 +34,15 @@ if __name__ == "__main__":
 
 app.include_router(import_router.router)
 app.include_router(admin.router)
+
+def handle_nan(obj):
+    if isinstance(obj, float):
+        if math.isnan(obj):
+            return 0.0
+        return round(obj, 2)
+    return obj
+
+app.json_encoder = jsonable_encoder({
+    "default": handle_nan,
+    "float": lambda x: round(x, 2) if not math.isnan(x) else 0.0
+})

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, Table, Text
+from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, Table, Text, Float
 from sqlalchemy.orm import relationship
 from app.database import Base
 
@@ -79,18 +79,19 @@ class TaughtDiscipline(Base):
 class Curriculum(Base):
     __tablename__ = "curriculum"
     
-    curriculum_id = Column(Integer, primary_key=True)
+    curriculum_id = Column(Integer, primary_key=True) 
     discipline = Column(String(255), nullable=False)
     department = Column(String(255), nullable=False)
-    lecture_hours = Column(Integer)
-    practice_hours = Column(Integer)
-    exam_hours = Column(Integer)
-    test_hours = Column(Integer)
-    course_project_hours = Column(Integer)
-    total_practice_hours = Column(Integer)
+    semester = Column(Integer, nullable=True)
+    lecture_hours = Column(Float, default=0.0)
+    practice_hours = Column(Float, default=0.0)
+    exam_hours = Column(Float, default=0.0)
+    test_hours = Column(Float, default=0.0)
+    course_project_hours = Column(Float, default=0.0)
+    total_practice_hours = Column(Float, default=0.0)
+    final_work_hours = Column(Integer, default=0)  # Новый столбец
     program_id = Column(Integer, ForeignKey('education_programs.program_id'))
-
-    # Связь с программами
+    
     program = relationship("EducationProgram", back_populates="curriculum")
 
 # Добавить в EducationProgram
