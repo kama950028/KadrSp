@@ -36,6 +36,7 @@
                             <th>Практики</th>
                             <th>Зачет</th>
                             <th>Экзамен</th>
+                            <th>Общее время практики</th>
                         </tr>
                     </thead>
                     <tbody id="curriculumList"></tbody>
@@ -60,6 +61,7 @@
                     <td>${item.practice_hours}</td>
                     <td>${item.test_hours}</td>
                     <td>${item.exam_hours}</td>
+                    <td>${item.total_practice_hours}</td> 
                 </tr>
             `).join('');
         }
