@@ -1,5 +1,5 @@
 from docx import Document
-import re, math
+import re, math, csv
 from sqlalchemy import delete
 from sqlalchemy.orm import Session, exc
 from app.models import Teacher, Qualification, EducationProgram, TaughtDiscipline, Curriculum
@@ -39,61 +39,59 @@ def parse_docx(file_path: str):
 
 
 
-
-def import_teachers(db: Session, teachers_data: list):
+def import_teachers_with_programs(db: Session, teachers_data: list):
+    """
+    Импортирует преподавателей и привязывает их к образовательным программам.
+    """
     for entry in teachers_data:
-        # Вставка преподавателя с обработкой конфликтов
-        stmt = (
-            insert(Teacher)
-            .values(
+        # Проверяем, существует ли преподаватель
+        teacher = db.query(Teacher).filter_by(full_name=entry["full_name"]).first()
+        if not teacher:
+            # Создаем нового преподавателя
+            teacher = Teacher(
                 full_name=entry["full_name"],
                 position=entry["position"],
                 education_level=entry["education_level"],
-                academic_degree=entry["academic_degree"],
-                academic_title=entry["academic_title"],
-                total_experience=entry["total_experience"],
-                teaching_experience=entry["teaching_experience"],
-                professional_experience=entry["professional_experience"]
+                total_experience=entry.get("total_experience", 0),
+                teaching_experience=entry.get("teaching_experience", 0),
+                professional_experience=entry.get("professional_experience", 0),
+                academic_degree=entry.get("academic_degree"),
+                academic_title=entry.get("academic_title")
             )
-            .on_conflict_do_nothing(index_elements=["full_name"])
-            .returning(Teacher.teacher_id)  # Получаем ID вставленной записи
-        )
+            db.add(teacher)
+            db.commit()
+            db.refresh(teacher)
 
-        result = db.execute(stmt).fetchone()
-        if not result:  # Если запись уже существует
-            teacher_id = db.query(Teacher).filter_by(full_name=entry["full_name"]).first().teacher_id
-        else:
-            teacher_id = result[0]
+        # Обработка образовательных программ
+        programs_raw = entry.get("programs_raw", "")
+        programs = [p.strip() for p in programs_raw.split(";") if p.strip()]  # Разделяем и очищаем программы
 
-        # Добавление дисциплин
-        disciplines = [d.strip() for d in entry["disciplines_raw"].split(";") if d.strip()]
-        for disc in disciplines:
-            db.add(TaughtDiscipline(discipline_name=disc, teacher_id=teacher_id))
-
-        # Обработка квалификаций
-        quals = re.split(r'(?<=\d{4}\.)\s*', entry["qualifications_raw"])
-        for qual in quals:
-            if not qual.strip():
-                continue
-            year_match = re.search(r'\b(\d{4})\.?$', qual)
-            year = int(year_match.group(1)) if year_match else None
-            course_name = re.sub(r'\s*\d{2}\.\d{2}\.\d{4}\.*\s*$', '', qual).strip()
-            if course_name and year:
-                db.add(Qualification(program_name=course_name, year=year, teacher_id=teacher_id))
-
-        # Обработка программ
-        programs = [p.strip() for p in entry["programs_raw"].split(";") if p.strip()]
-        for prog in programs:
-            program = db.query(EducationProgram).filter(EducationProgram.program_name == prog).first()
+        for program_name in programs:
+            # Проверяем, существует ли программа
+            program = db.query(EducationProgram).filter_by(program_name=program_name).first()
             if not program:
-                program = EducationProgram(program_name=prog)
+                # Генерация уникального short_name
+                base_short_name = program_name[:10].strip()  # Берем первые 10 символов
+                short_name = base_short_name
+                counter = 1
+
+                # Проверяем уникальность short_name
+                while db.query(EducationProgram).filter_by(short_name=short_name).first():
+                    short_name = f"{base_short_name}_{counter}"
+                    counter += 1
+
+                # Создаем новую программу
+                program = EducationProgram(program_name=program_name, short_name=short_name, year=2023)
                 db.add(program)
                 db.commit()
                 db.refresh(program)
-            teacher = db.query(Teacher).filter_by(teacher_id=teacher_id).first()
-            teacher.programs.append(program)
-        
+
+            # Привязываем преподавателя к программе
+            if program not in teacher.programs:
+                teacher.programs.append(program)
+
         db.commit()
+
 
 # def determine_program_type(file_name: str) -> str:
 #     """
@@ -195,6 +193,44 @@ def parse_excel(file_path: str) -> list:
         # Если семестры не указаны, добавляем запись без семестра
         if not semesters:
             semesters = [None]
+            
+        # Проверяем, содержит ли дисциплина слово "практика"
+        if "практика" in discipline.lower():
+            for semester in semesters:
+                exam_hours = safe_float(row.get('конт. раб.', 0))  # Берем часы из столбца "Конт. раб."
+                entry = {
+                    'discipline': discipline,
+                    'department': str(row.get('кафедра', 'Кафедра не указана')),
+                    'semester': semester,
+                    'final_work_hours': 0,
+                    'lecture_hours': 0.0,
+                    'practice_hours': 0.0,
+                    'test_hours': 0.0,
+                    'exam_hours': exam_hours,  # Часы из "Конт. раб."
+                    'course_project_hours': 0.0,
+                    'total_practice_hours': exam_hours  # Общее время практики равно exam_hours
+                }
+                curriculum_data.append(entry)
+            continue  # Пропускаем стандартную обработку
+
+        # Проверяем, содержит ли дисциплина слова "Выполнение и защита выпускной"
+        if "выполнение и защита выпускной" in discipline.lower():
+            for semester in semesters:
+                final_work_hours = 18  # Пример значения для выпускной работы
+                entry = {
+                    'discipline': discipline,
+                    'department': str(row.get('кафедра', 'Кафедра не указана')),
+                    'semester': semester,
+                    'final_work_hours': final_work_hours,
+                    'lecture_hours': 0.0,
+                    'practice_hours': 0.0,
+                    'test_hours': 0.0,
+                    'exam_hours': 0.0,
+                    'course_project_hours': 0.0,
+                    'total_practice_hours': final_work_hours  # Суммируем данные (равно final_work_hours)
+                }
+                curriculum_data.append(entry)
+            continue  # Пропускаем стандартную обработку
 
         # Создаем запись для каждого семестра
         for semester in semesters:
@@ -238,6 +274,26 @@ def parse_excel(file_path: str) -> list:
 
     return curriculum_data
 
+def assign_teacher_to_program(db: Session, teacher_id: int, program_id: int):
+    """
+    Привязывает преподавателя к образовательной программе.
+    """
+    teacher = db.query(Teacher).filter(Teacher.teacher_id == teacher_id).first()
+    program = db.query(EducationProgram).filter(EducationProgram.program_id == program_id).first()
+
+    if not teacher:
+        raise ValueError(f"Преподаватель с ID {teacher_id} не найден")
+    if not program:
+        raise ValueError(f"Образовательная программа с ID {program_id} не найдена")
+
+    # Добавляем программу в список программ преподавателя
+    if program not in teacher.programs:
+        teacher.programs.append(program)
+        db.commit()
+        print(f"Преподаватель {teacher.full_name} привязан к программе {program.program_name}")
+    else:
+        print(f"Преподаватель {teacher.full_name} уже привязан к программе {program.program_name}")
+
 
 def import_curriculum(db: Session, curriculum_data: list):
     try:
@@ -249,6 +305,16 @@ def import_curriculum(db: Session, curriculum_data: list):
         # Очистка таблицы
         db.execute(delete(Curriculum))
         
+        # Связывание дисциплин с образовательными программами
+        for entry in curriculum_data:
+            program_short_name = entry.get('program_short_name')
+            if program_short_name:
+                program = db.query(EducationProgram).filter_by(short_name=program_short_name).first()
+                if program:
+                    entry['program_id'] = program.program_id
+                else:
+                    print(f"Программа с short_name '{program_short_name}' не найдена")
+
         # Пакетная вставка
         db.bulk_insert_mappings(Curriculum, curriculum_data)
         db.commit()
@@ -259,3 +325,86 @@ def import_curriculum(db: Session, curriculum_data: list):
     except Exception as e:
         db.rollback()
         raise e
+    
+def check_duplicates_in_csv(file_path: str):
+    """
+    Проверяет наличие дубликатов в столбце short_name в CSV-файле.
+    """
+    with open(file_path, mode='r', encoding='utf-8') as file:
+        reader = csv.DictReader(file)
+        short_names = set()
+        duplicates = set()
+        
+        for row in reader:
+            short_name = row['short_name'].strip()
+            if short_name in short_names:
+                duplicates.add(short_name)
+            else:
+                short_names.add(short_name)
+        
+        if duplicates:
+            raise ValueError(f"Найдены дубликаты в CSV-файле: {', '.join(duplicates)}")
+        
+def remove_duplicates_from_csv(file_path: str, output_file_path: str):
+    """
+    Удаляет дубликаты из CSV-файла на основе поля short_name и сохраняет результат в новый файл.
+    """
+    try:
+        with open(file_path, mode='r', encoding='utf-8') as file:
+            reader = csv.DictReader(file)
+            unique_rows = {}
+            
+            for row in reader:
+                short_name = row['short_name'].strip()
+                # Если short_name уже есть, пропускаем запись
+                if short_name not in unique_rows:
+                    unique_rows[short_name] = row
+            
+        # Сохраняем уникальные записи в новый файл
+        with open(output_file_path, mode='w', encoding='utf-8', newline='') as output_file:
+            writer = csv.DictWriter(output_file, fieldnames=reader.fieldnames)
+            writer.writeheader()
+            writer.writerows(unique_rows.values())
+        
+        print(f"Дубликаты удалены. Уникальные записи сохранены в файл: {output_file_path}")
+    except Exception as e:
+        raise RuntimeError(f"Ошибка при удалении дубликатов: {e}")
+
+def import_education_programs(file_path: str, db: Session):
+    """
+    Импортирует образовательные программы из CSV-файла в таблицу education_programs.
+    Если программа с таким short_name уже существует, она обновляется.
+    """
+    try:
+        # Удаляем дубликаты перед импортом
+        cleaned_file_path = "cleaned_" + file_path
+        remove_duplicates_from_csv(file_path, cleaned_file_path)
+        
+        with open(cleaned_file_path, mode='r', encoding='utf-8') as file:
+            reader = csv.DictReader(file)
+            
+            for row in reader:
+                program_name = row['program_name'].strip()
+                short_name = row['short_name'].strip()
+                year = int(row['year'])
+
+                # Проверяем, существует ли запись с таким short_name
+                existing_program = db.query(EducationProgram).filter_by(short_name=short_name).first()
+                if existing_program:
+                    # Обновляем существующую запись
+                    existing_program.program_name = program_name
+                    existing_program.year = year
+                else:
+                    # Добавляем новую запись
+                    new_program = EducationProgram(
+                        program_name=program_name,
+                        short_name=short_name,
+                        year=year
+                    )
+                    db.add(new_program)
+            
+            db.commit()
+            print("Импорт завершен.")
+    except Exception as e:
+        db.rollback()
+        raise RuntimeError(f"Ошибка импорта образовательных программ: {e}")

@@ -2,97 +2,137 @@ from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, Table, Text
 from sqlalchemy.orm import relationship
 from app.database import Base
 
-# Связь многие-ко-многим между преподавателями и программами
+# Связь многие-ко-многим между преподавателями и образовательными программами
 teacher_program_association = Table(
     'teacher_programs', Base.metadata,
     Column('teacher_id', Integer, ForeignKey('teachers.teacher_id', ondelete="CASCADE")),
     Column('program_id', Integer, ForeignKey('education_programs.program_id', ondelete="CASCADE"))
 )
 
+# Таблица преподавателей
 class Teacher(Base):
     __tablename__ = "teachers"
 
-    teacher_id = Column(Integer, primary_key=True, index=True)
-    full_name = Column(String(255), unique=True, nullable=False)
-    position = Column(String(255), nullable=False)
-    education_level = Column(Text, nullable=False)
-    qualification = Column(String(255))
-    base_education_specialty = Column(String(255))
-    scientific_education_specialty = Column(String(255))
-    academic_degree = Column(String(255))  # Увеличиваем длину до 255 символов
-    academic_title = Column(String(255))  # Увеличиваем длину до 255 символов
-    total_experience = Column(Integer)  # в годах
-    teaching_experience = Column(Integer)
-    professional_experience = Column(Integer)
+    teacher_id = Column(Integer, primary_key=True, index=True)  # Уникальный идентификатор преподавателя
+    full_name = Column(String(255), unique=True, nullable=False)  # Полное имя преподавателя
+    position = Column(String(255), nullable=False)  # Должность преподавателя
+    education_level = Column(Text, nullable=False)  # Уровень профессионального образования
+    qualification = Column(String(255))  # Квалификация преподавателя
+    base_education_specialty = Column(String(255))  # Специальность базового образования
+    scientific_education_specialty = Column(String(255))  # Специальность научного образования
+    academic_degree = Column(String(255))  # Учёная степень
+    academic_title = Column(String(255))  # Учёное звание
+    total_experience = Column(Integer)  # Общий стаж работы (в годах)
+    teaching_experience = Column(Integer)  # Педагогический стаж (в годах)
+    professional_experience = Column(Integer)  # Профессиональный стаж (в годах)
 
     # Связи
     qualifications = relationship("Qualification", back_populates="teacher", cascade="all, delete", lazy="selectin")
     retrainings = relationship("Retraining", back_populates="teacher", cascade="all, delete", lazy="selectin")
-    disciplines = relationship("TaughtDiscipline", back_populates="teacher", cascade="all, delete", lazy="selectin")
+    # disciplines = relationship("TaughtDiscipline", back_populates="teacher", cascade="all, delete", lazy="selectin")
+    # Связь с дисциплинами через таблицу TaughtDiscipline
+    taught_disciplines = relationship("TaughtDiscipline", back_populates="teacher")
+    disciplines = relationship(
+        "Curriculum",
+        secondary="taught_disciplines",
+        back_populates="teachers"
+    )
     programs = relationship(
         "EducationProgram", 
         secondary=teacher_program_association,
         back_populates="teachers"
     )
 
+# Таблица квалификаций преподавателей
 class Qualification(Base):
     __tablename__ = "qualifications"
 
-    qualification_id = Column(Integer, primary_key=True, index=True)
-    program_name = Column(Text, nullable=False)  # Убедитесь, что этот атрибут существует
-    year = Column(Integer, nullable=False)
+    qualification_id = Column(Integer, primary_key=True, index=True)  # Уникальный идентификатор квалификации
+    program_name = Column(Text, nullable=False)  # Название программы повышения квалификации
+    year = Column(Integer, nullable=False)  # Год прохождения программы
 
-    teacher_id = Column(Integer, ForeignKey("teachers.teacher_id", ondelete="CASCADE"), nullable=False)
+    teacher_id = Column(Integer, ForeignKey("teachers.teacher_id", ondelete="CASCADE"), nullable=False)  # Связь с преподавателем
     teacher = relationship("Teacher", back_populates="qualifications", lazy="selectin")
 
+# Таблица переподготовок преподавателей
 class Retraining(Base):
     __tablename__ = "retrainings"
 
-    retraining_id = Column(Integer, primary_key=True, index=True)
-    teacher_id = Column(Integer, ForeignKey('teachers.teacher_id', ondelete="CASCADE"), nullable=False)
-    program_name = Column(Text, nullable=False)
-    year = Column(Integer, nullable=False)
+    retraining_id = Column(Integer, primary_key=True, index=True)  # Уникальный идентификатор переподготовки
+    teacher_id = Column(Integer, ForeignKey('teachers.teacher_id', ondelete="CASCADE"), nullable=False)  # Связь с преподавателем
+    program_name = Column(Text, nullable=False)  # Название программы переподготовки
+    year = Column(Integer, nullable=False)  # Год прохождения программы
 
     teacher = relationship("Teacher", back_populates="retrainings", lazy="selectin")
 
+# Таблица образовательных программ
 class EducationProgram(Base):
     __tablename__ = "education_programs"
 
-    program_id = Column(Integer, primary_key=True, index=True)
-    program_name = Column(String(255), unique=True, nullable=False)
+    program_id = Column(Integer, primary_key=True, index=True)  # Уникальный идентификатор программы
+    program_name = Column(String(255), unique=True, nullable=False)  # Полное название программы
+    short_name = Column(String(255), unique=True, nullable=True)  # Сокращенное название программы (может быть NULL)
+    year = Column(Integer, nullable=False)  # Год прохождения программы
 
+    # Связи
     teachers = relationship(
         "Teacher", 
         secondary=teacher_program_association,
         back_populates="programs", lazy="selectin"
     )
+    curriculum = relationship("Curriculum", back_populates="program")  # Связь с учебными планами
+
+# Таблица преподаваемых дисциплин
+# class TaughtDiscipline(Base):
+#     __tablename__ = "taught_disciplines"
+
+#     discipline_id = Column(Integer, primary_key=True, index=True)  # Уникальный идентификатор дисциплины
+#     teacher_id = Column(Integer, ForeignKey('teachers.teacher_id', ondelete="CASCADE"), nullable=False)  # Связь с преподавателем
+#     discipline_name = Column(String(255), nullable=False)  # Название дисциплины
+
+#     teacher = relationship("Teacher", back_populates="disciplines", lazy="selectin")
+#     curriculum = relationship("Curriculum", back_populates="teachers")
 
 class TaughtDiscipline(Base):
     __tablename__ = "taught_disciplines"
 
     discipline_id = Column(Integer, primary_key=True, index=True)
-    teacher_id = Column(Integer, ForeignKey('teachers.teacher_id', ondelete="CASCADE"), nullable=False)
-    discipline_name = Column(String(255), nullable=False)
+    teacher_id = Column(Integer, ForeignKey("teachers.teacher_id", ondelete="CASCADE"), nullable=False)
+    curriculum_id = Column(Integer, ForeignKey("curriculum.curriculum_id", ondelete="CASCADE"), nullable=False)
 
-    teacher = relationship("Teacher", back_populates="disciplines", lazy="selectin")
+    teacher = relationship("Teacher", back_populates="taught_disciplines")
+    curriculum = relationship("Curriculum", back_populates="taught_disciplines")
 
+# Таблица учебных планов
 class Curriculum(Base):
     __tablename__ = "curriculum"
     
-    curriculum_id = Column(Integer, primary_key=True) 
-    discipline = Column(String(255), nullable=False)
-    department = Column(String(255), nullable=False)
-    semester = Column(Integer, nullable=True)
-    lecture_hours = Column(Float, default=0.0)
-    practice_hours = Column(Float, default=0.0)
-    exam_hours = Column(Float, default=0.0)
-    test_hours = Column(Float, default=0.0)
-    course_project_hours = Column(Float, default=0.0)
-    total_practice_hours = Column(Float, default=0.0)
-    final_work_hours = Column(Integer, default=0)  # Новый столбец
-    program_id = Column(Integer, ForeignKey('education_programs.program_id'))
+    curriculum_id = Column(Integer, primary_key=True)  # Уникальный идентификатор учебного плана
+    discipline = Column(String(255), nullable=False)  # Название дисциплины
+    department = Column(String(255), nullable=False)  # Название кафедры
+    semester = Column(Integer, nullable=True)  # Семестр, в котором преподается дисциплина
+    lecture_hours = Column(Float, default=0.0)  # Количество часов лекций
+    practice_hours = Column(Float, default=0.0)  # Количество часов практических занятий
+    exam_hours = Column(Float, default=0.0)  # Количество часов экзамена
+    test_hours = Column(Float, default=0.0)  # Количество часов зачета
+    course_project_hours = Column(Float, default=0.0)  # Количество часов на курсовой проект
+    total_practice_hours = Column(Float, default=0.0)  # Общее количество часов практики
+    final_work_hours = Column(Integer, default=0)  # Количество часов на выполнение выпускной квалификационной работы
+    program_id = Column(Integer, ForeignKey('education_programs.program_id'))  # Связь с образовательной программой
     
-    program = relationship("EducationProgram", back_populates="curriculum")
+    program = relationship("EducationProgram", back_populates="curriculum")  # Связь с образовательной программой
+    
+    # Добавляем связь с преподавателями через таблицу TaughtDiscipline
+    teachers = relationship(
+        "Teacher",
+        secondary="taught_disciplines",
+        back_populates="disciplines"
+    )
+    taught_disciplines = relationship("TaughtDiscipline", back_populates="curriculum")
+    
+    @property
+    def program_short_name(self):
+        return self.program.short_name if self.program else None
 
 # Добавить в EducationProgram
 EducationProgram.curriculum = relationship("Curriculum", back_populates="program")

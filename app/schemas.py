@@ -20,3 +20,32 @@ class TeacherResponse(BaseModel):
     qualifications: List[QualificationBase]  # Убедитесь, что используется правильная схема
     class Config:
         from_attributes = True  # Для работы с ORM объектами
+
+
+class CurriculumBase(BaseModel):
+    discipline: str
+    department: str
+    lecture_hours: float
+    exam_hours: float
+    course_project_hours: float
+    final_work_hours: int
+    semester: Optional[int]
+    practice_hours: float
+    test_hours: float
+    total_practice_hours: float
+    program_id: Optional[int]
+    program_short_name: Optional[str]  # Добавлено поле для short_name
+
+    class Config:
+        orm_mode = True  # Позволяет работать с объектами SQLAlchemy
+
+
+class EducationProgramBase(BaseModel):
+    program_id: int
+    program_name: str
+    short_name: Optional[str]
+    year: int
+    curriculum: List[CurriculumBase] = []  # Связанные дисциплины
+
+    class Config:
+        orm_mode = True

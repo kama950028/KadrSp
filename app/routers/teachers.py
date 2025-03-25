@@ -2,11 +2,12 @@ from typing import List
 from sqlalchemy.orm import Session, joinedload
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from app.models import Teacher, Qualification, Curriculum
-from app.services.import_utils import parse_excel, import_curriculum
+from app.services.import_utils import parse_excel, import_curriculum, assign_teacher_to_program, import_teachers_with_programs, parse_docx
 from app.schemas import TeacherCreate, TeacherResponse
 from app.database import get_db
+
 from typing import Optional
-import os
+import os, docx
 
 
 router = APIRouter(prefix="/api", tags=["teachers"])
@@ -65,13 +66,44 @@ def get_teacher(teacher_id: int, db: Session = Depends(get_db)):
     return teacher
 
 
+@router.post("/teachers/{teacher_id}/assign-program/{program_id}")
+def assign_program_to_teacher(teacher_id: int, program_id: int, db: Session = Depends(get_db)):
+    """
+    Привязывает преподавателя к образовательной программе.
+    """
+    try:
+        assign_teacher_to_program(db, teacher_id, program_id)
+        return {"message": f"Преподаватель с ID {teacher_id} привязан к программе с ID {program_id}"}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/teachers/import")
+
+def import_teachers(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    """
+    Импортирует преподавателей из загруженного файла и привязывает их к образовательным программам.
+    """
+    if not file.filename.endswith(".docx"):
+        raise HTTPException(status_code=400, detail="Поддерживаются только файлы .docx")
+
+    # Сохраняем временный файл
+    temp_file = f"temp_{file.filename}"
+    with open(temp_file, "wb") as buffer:
+        buffer.write(file.file.read())
+
+    try:
+        # Парсим данные из файла
+        teachers_data = parse_docx(temp_file)  # Функция для парсинга docx
+        import_teachers_with_programs(db, teachers_data)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка импорта преподавателей: {str(e)}")
+    finally:
+        os.remove(temp_file)
+
+    return {"message": "Преподаватели успешно импортированы"}
 
 
 
-@router.get("/curriculum")
-def get_curriculum(curriculum_id: Optional[int] = None, db: Session = Depends(get_db)):
-    if curriculum_id:
-        # Если указан curriculum_id, фильтруем по нему
-        return db.query(Curriculum).filter(Curriculum.curriculum_id == curriculum_id).all()
-    # Если program_id не указан, возвращаем все записи
-    return db.query(Curriculum).all()
+

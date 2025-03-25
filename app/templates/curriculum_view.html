@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Образовательные программы</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="container py-5">
+    <h1 class="mb-4">Образовательные программы</h1>
+
+    <!-- Выбор образовательной программы -->
+    <div class="mb-4">
+        <label for="programSelect" class="form-label">Выберите образовательную программу:</label>
+        <select id="programSelect" class="form-select" onchange="fetchProgramDetails()">
+            <option value="">-- Выберите образовательную программу --</option>
+        </select>
+    </div>
+
+        <!-- Данные по выбранной образовательной программе -->
+    <div id="programDetails" class="mt-4" style="display: none;">
+        <h3>Детали образовательной программы</h3>
+        <table class="table table-bordered">
+            <tbody>
+                <tr>
+                    <th>Полное название</th>
+                    <td id="program_name"></td>
+                </tr>
+                <tr>
+                    <th>Сокращённое название</th>
+                    <td id="short_name"></td>
+                </tr>
+                <tr>
+                    <th>Год</th>
+                    <td id="year"></td>
+                </tr>
+            </tbody>
+        </table>
+    
+        <h3 class="mt-4">Дисциплины и преподаватели</h3>
+        <table class="table table-striped">
+            <thead>
+                <tr>
+                    <th>Дисциплина</th>
+                    <th>ФИО преподавателя</th>
+                    <th>Должность</th>
+                    <th>Учёная степень</th>
+                    <th>Учёное звание</th>
+                    <th>Лекции (часы)</th>
+                    <th>Практика (часы)</th>
+                    <th>Общий стаж</th>
+                    <th>Педагогический стаж</th>
+                </tr>
+            </thead>
+            <tbody id="disciplineTableBody">
+                <!-- Данные будут добавлены динамически -->
+            </tbody>
+        </table>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Загрузка списка образовательных программ
+                // Загрузка списка образовательных программ
+        async function loadPrograms() {
+            try {
+                const response = await fetch('/curriculum/EducationProgram');
+                const programs = await response.json();
+        
+                // Сортировка программ по сокращённому названию (short_name) в алфавитном порядке
+                programs.sort((a, b) => {
+                    const nameA = (a.program_name || '').toLowerCase();
+                    const nameB = (b.program_name || '').toLowerCase();
+                    return nameA.localeCompare(nameB);
+                });
+        
+                const select = document.getElementById('programSelect');
+                programs.forEach(program => {
+                    const option = document.createElement('option');
+                    option.value = program.program_id;
+                    option.textContent = program.program_name || 'Без сокращения'; // Отображаем только сокращённое название
+                    select.appendChild(option);
+                });
+            } catch (error) {
+                console.error('Ошибка загрузки образовательных программ:', error);
+            }
+        }
+
+                // Загрузка данных по выбранной образовательной программе
+        async function fetchProgramDetails() {
+            const select = document.getElementById('programSelect');
+            const programId = select.value;
+        
+            if (!programId) {
+                document.getElementById('programDetails').style.display = 'none';
+                return;
+            }
+        
+            try {
+                const response = await fetch(`/curriculum/EducationProgram?program_id=${programId}`);
+                const program = await response.json();
+        
+                // Отображение основной информации об образовательной программе
+                document.getElementById('program_name').textContent = program.program_name;
+                document.getElementById('short_name').textContent = program.short_name || 'Не указано';
+                document.getElementById('year').textContent = program.year;
+        
+                // Отображение связанных дисциплин и преподавателей
+                const curriculumList = program.curriculum;
+                const tableBody = document.getElementById('disciplineTableBody');
+                tableBody.innerHTML = ''; // Очищаем таблицу перед добавлением новых данных
+        
+                curriculumList.forEach(curriculum => {
+                    curriculum.teachers.forEach(teacher => {
+                        const row = document.createElement('tr');
+        
+                        row.innerHTML = `
+                            <td>${curriculum.discipline}</td>
+                            <td>${teacher.full_name}</td>
+                            <td>${teacher.position}</td>
+                            <td>${teacher.academic_degree || 'Нет'}</td>
+                            <td>${teacher.academic_title || 'Нет'}</td>
+                            <td>${curriculum.lecture_hours || 0}</td>
+                            <td>${curriculum.practice_hours || 0}</td>
+                            <td>${teacher.total_experience || 0}</td>
+                            <td>${teacher.teaching_experience || 0}</td>
+                        `;
+        
+                        tableBody.appendChild(row);
+                    });
+                });
+        
+                document.getElementById('programDetails').style.display = 'block';
+            } catch (error) {
+                console.error('Ошибка загрузки деталей образовательной программы:', error);
+            }
+        }
+
+        // Инициализация
+        loadPrograms();
+    </script>
+</body>
+</html>

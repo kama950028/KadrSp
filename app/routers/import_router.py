@@ -3,7 +3,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from app.database import get_db
-from app.services.import_utils import parse_docx, import_teachers, parse_excel, import_curriculum
+from app.services.import_utils import parse_docx, import_teachers_with_programs, parse_excel, import_curriculum
 import os
 import uuid
 
@@ -36,8 +36,11 @@ async def import_teachers_from_docx(
 
 def process_import(file_path: str, db: Session):
     try:
+        # Парсим данные из файла
         teachers_data = parse_docx(file_path)
-        import_teachers(db, teachers_data)
+        
+        # Импортируем преподавателей с привязкой к программам
+        import_teachers_with_programs(db, teachers_data)
     except IntegrityError as e:
         db.rollback()
         print(f"Ошибка уникальности: {e}")
@@ -45,6 +48,7 @@ def process_import(file_path: str, db: Session):
         db.rollback()
         raise e
     finally:
+        # Удаляем временный файл
         os.remove(file_path)
 
 @router.post("/upload-curriculum")
@@ -68,3 +72,29 @@ async def upload_curriculum(
         os.remove(temp_file)
     
     return {"message": f"Successfully imported {len(data)} records"}
+
+
+
+@router.post("/teachers/import")
+def import_teachers(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    """
+    Импортирует преподавателей из загруженного файла.
+    """
+    if not file.filename.endswith(".docx"):
+        raise HTTPException(status_code=400, detail="Поддерживаются только файлы .docx")
+
+    # Сохраняем временный файл
+    temp_file = f"temp_{file.filename}"
+    with open(temp_file, "wb") as buffer:
+        buffer.write(file.file.read())
+
+    try:
+        # Парсим данные из файла
+        teachers_data = parse_docx(temp_file)
+        import_teachers_with_programs(db, teachers_data)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка импорта преподавателей: {str(e)}")
+    finally:
+        os.remove(temp_file)
+
+    return {"message": "Преподаватели успешно импортированы"}
