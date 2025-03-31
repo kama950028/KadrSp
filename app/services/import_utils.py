@@ -295,37 +295,84 @@ def assign_teacher_to_program(db: Session, teacher_id: int, program_id: int):
         print(f"Преподаватель {teacher.full_name} уже привязан к программе {program.program_name}")
 
 
+# def import_curriculum(db: Session, curriculum_data: list):
+#     try:
+#         # Проверка данных
+#         invalid = [d for d in curriculum_data if not isinstance(d.get('discipline'), str)]
+#         if invalid:
+#             raise ValueError(f"Найдено {len(invalid)} некорректных записей")
+
+#         # Очистка таблицы
+#         db.execute(delete(Curriculum))
+        
+#         # Связывание дисциплин с образовательными программами
+#         for entry in curriculum_data:
+#             program_short_name = entry.get('program_short_name')
+#             if program_short_name:
+#                 program = db.query(EducationProgram).filter_by(short_name=program_short_name).first()
+#                 if program:
+#                     entry['program_id'] = program.program_id
+#                 else:
+#                     print(f"Программа с short_name '{program_short_name}' не найдена")
+
+#         # Пакетная вставка
+#         db.bulk_insert_mappings(Curriculum, curriculum_data)
+#         db.commit()
+        
+#         print(f"Импортировано {len(curriculum_data)} записей")
+#         return True
+    
+#     except Exception as e:
+#         db.rollback()
+#         raise e
+    
 def import_curriculum(db: Session, curriculum_data: list):
+    """
+    Импортирует учебные планы и связывает их с выбранной образовательной программой.
+    """
     try:
+        # Получаем список доступных образовательных программ
+        programs = db.query(EducationProgram).all()
+        if not programs:
+            raise ValueError("Нет доступных образовательных программ. Сначала создайте их.")
+
+        # Выводим список программ для выбора
+        print("Доступные образовательные программы:")
+        for i, program in enumerate(programs, start=1):
+            print(f"{i}. {program.program_name} (short_name: {program.short_name}, year: {program.year})")
+
+        # Запрашиваем выбор пользователя
+        selected_index = int(input("Введите номер образовательной программы: ")) - 1
+        if selected_index < 0 or selected_index >= len(programs):
+            raise ValueError("Неверный выбор программы.")
+
+        selected_program = programs[selected_index]
+        print(f"Вы выбрали программу: {selected_program.program_name} (ID: {selected_program.program_id})")
+
+        # Добавляем program_id ко всем записям учебного плана
+        for entry in curriculum_data:
+            entry['program_id'] = selected_program.program_id
+
         # Проверка данных
         invalid = [d for d in curriculum_data if not isinstance(d.get('discipline'), str)]
         if invalid:
             raise ValueError(f"Найдено {len(invalid)} некорректных записей")
 
-        # Очистка таблицы
+        # Очистка таблицы (если требуется)
         db.execute(delete(Curriculum))
-        
-        # Связывание дисциплин с образовательными программами
-        for entry in curriculum_data:
-            program_short_name = entry.get('program_short_name')
-            if program_short_name:
-                program = db.query(EducationProgram).filter_by(short_name=program_short_name).first()
-                if program:
-                    entry['program_id'] = program.program_id
-                else:
-                    print(f"Программа с short_name '{program_short_name}' не найдена")
 
         # Пакетная вставка
         db.bulk_insert_mappings(Curriculum, curriculum_data)
         db.commit()
-        
-        print(f"Импортировано {len(curriculum_data)} записей")
+
+        print(f"Импортировано {len(curriculum_data)} записей для программы '{selected_program.program_name}'")
         return True
-    
+
     except Exception as e:
         db.rollback()
-        raise e
-    
+        raise RuntimeError(f"Ошибка импорта учебных планов: {e}")
+
+
 def check_duplicates_in_csv(file_path: str):
     """
     Проверяет наличие дубликатов в столбце short_name в CSV-файле.

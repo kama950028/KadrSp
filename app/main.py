@@ -1,9 +1,8 @@
-from fastapi import FastAPI
-from fastapi.encoders import jsonable_encoder
-import math
+from fastapi import FastAPI, Request, APIRouter
+from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
 from app.routers import teachers, import_router, admin, curriculum
 from app.database import engine, Base
-import asyncio
 from fastapi.staticfiles import StaticFiles
 
 # Создаем таблицы в БД (в реальном проекте используйте миграции!)
@@ -14,36 +13,39 @@ app = FastAPI()
 # Подключение статических файлов (CSS/JS)
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
-# Подключение HTML-шаблонов (если нужно)
-app.mount("/templates", StaticFiles(directory="app/templates"), name="templates")
+# Подключение HTML-шаблонов
+templates = Jinja2Templates(directory="app/templates")
 
 # Подключение маршрутов
 app.include_router(teachers.router)
 app.include_router(import_router.router)
 app.include_router(admin.router)
-app.include_router(curriculum.router)  # Подключаем маршрут /curriculum
+app.include_router(curriculum.router)
 
+@app.get("/", response_class=HTMLResponse)
+def read_home(request: Request):
+    """
+    Главная страница с кнопками для навигации.
+    """
+    return templates.TemplateResponse("home.html", {"request": request})
 
-@app.get("/")
-def read_root():
-    return {"message": "KadrSp API"}
+@app.get("/teachers", response_class=HTMLResponse)
+def teachers_page(request: Request):
+    """
+    Страница преподавателей.
+    """
+    return templates.TemplateResponse("index.html", {"request": request})
 
-async def create_tables():
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+@app.get("/curriculum/upload", response_class=HTMLResponse)
+def curriculum_upload_page(request: Request):
+    """
+    Страница загрузки учебных планов.
+    """
+    return templates.TemplateResponse("curriculum_upload.html", {"request": request})
 
-if __name__ == "__main__":
-    asyncio.run(create_tables())
-
-
-def handle_nan(obj):
-    if isinstance(obj, float):
-        if math.isnan(obj):
-            return 0.0
-        return round(obj, 2)
-    return obj
-
-app.json_encoder = jsonable_encoder({
-    "default": handle_nan,
-    "float": lambda x: round(x, 2) if not math.isnan(x) else 0.0
-})
+@app.get("/curriculum/view", response_class=HTMLResponse)
+def curriculum_view_page(request: Request):
+    """
+    Страница образовательных программ.
+    """
+    return templates.TemplateResponse("curriculum_view.html", {"request": request})
