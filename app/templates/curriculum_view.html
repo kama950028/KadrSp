@@ -64,30 +64,23 @@
         async function loadPrograms() {
             try {
                 const response = await fetch('/curriculum/EducationProgram');
-                if (!response.ok) {
-                    throw new Error(`Ошибка HTTP: ${response.status}`);
-                }
-                const programs = await response.json();
-        
-                // Сохраняем данные в глобальную переменную
-                window.programs = programs;
-        
-                console.log("Все программы:", programs); // Отладочный вывод
-        
-                if (programs.length === 0) {
-                    console.error("Список образовательных программ пуст.");
-                    return;
-                }
-        
+                if (!response.ok) throw new Error(`Ошибка HTTP: ${response.status}`);
+                
+                window.programs = await response.json();
+                console.log("Все программы:", window.programs);
+
                 const select = document.getElementById('programSelect');
-                programs.forEach(program => {
+                select.innerHTML = '<option value="">-- Выберите программу --</option>';
+                
+                window.programs.forEach(program => {
                     const option = document.createElement('option');
                     option.value = program.program_id;
-                    option.textContent = program.short_name || 'Без сокращения';
+                    option.textContent = program.short_name || program.program_name || `Программа ${program.program_id}`;
                     select.appendChild(option);
                 });
             } catch (error) {
-                console.error('Ошибка загрузки образовательных программ:', error);
+                console.error('Ошибка загрузки программ:', error);
+                alert('Не удалось загрузить список программ');
             }
         }
         
@@ -96,60 +89,102 @@
         async function fetchProgramDetails() {
             const select = document.getElementById('programSelect');
             const programId = select.value;
-        
+            
             if (!programId) {
                 document.getElementById('programDetails').style.display = 'none';
                 return;
             }
-        
+
             try {
-                const response = await fetch(`/curriculum/EducationProgram?program_id=${programId}`);
-                const program = await response.json();
-        
-                console.log("Данные программы:", program); // Отладочный вывод
-        
-                document.getElementById('program_name').textContent = program.program_name;
-                document.getElementById('short_name').textContent = program.short_name || 'Не указано';
-                document.getElementById('year').textContent = program.year;
-        
-                const curriculumList = program.curriculum || []; // Убедитесь, что это массив
+                // Находим выбранную программу в уже загруженных данных
+                const program = window.programs.find(p => p.program_id == programId);
+                
+                if (!program) {
+                    throw new Error('Программа не найдена');
+                }
+
+                console.log("Выбранная программа:", program); // Отладочный вывод
+
+                // Обновляем основную информацию
+                document.getElementById('program_name').textContent = program.program_name || "Не указано";
+                document.getElementById('short_name').textContent = program.short_name || "Не указано";
+                document.getElementById('year').textContent = program.year || "Не указан";
+
+                // Обработка дисциплин и преподавателей
                 const tableBody = document.getElementById('disciplineTableBody');
                 tableBody.innerHTML = '';
-                
-                console.log("Curriculum List:", curriculumList);
-                
-                curriculumList.forEach(curriculum => {
-                    if (!curriculum.teachers || curriculum.teachers.length === 0) {
-                        // Добавляем строку с дисциплиной, если преподавателей нет
-                        const row = document.createElement('tr');
-                        row.innerHTML = `
-                            <td>${curriculum.discipline || 'Не указано'}</td>
-                            <td colspan="8" class="text-center">Преподаватели не назначены</td>
-                        `;
-                        tableBody.appendChild(row);
-                    } else {
-                        // Добавляем строки для каждого преподавателя
-                        curriculum.teachers.forEach(teacher => {
-                            const row = document.createElement('tr');
-                            row.innerHTML = `
-                                <td>${curriculum.discipline || 'Не указано'}</td>
+
+                // Используем curriculum если он есть, иначе teachers
+                const itemsToDisplay = program.curriculum && program.curriculum.length > 0 
+                    ? program.curriculum 
+                    : (program.teachers || []);
+
+                if (itemsToDisplay.length === 0) {
+                    tableBody.innerHTML = `
+                        <tr>
+                            <td colspan="9" class="text-center text-muted">
+                                Нет данных о дисциплинах и преподавателях
+                            </td>
+                        </tr>`;
+                } else {
+                    // Обработка для curriculum
+                    if (program.curriculum && program.curriculum.length > 0) {
+                        program.curriculum.forEach(curriculum => {
+                            const teachers = curriculum.teachers || [];
+                            if (teachers.length === 0) {
+                                tableBody.innerHTML += `
+                                    <tr>
+                                        <td>${curriculum.discipline || 'Не указано'}</td>
+                                        <td colspan="8" class="text-center text-muted">
+                                            Преподаватели не назначены
+                                        </td>
+                                    </tr>`;
+                            } else {
+                                teachers.forEach(teacher => {
+                                    tableBody.innerHTML += `
+                                    <tr>
+                                        <td>${curriculum.discipline || 'Не указано'}</td>
+                                        <td>${teacher.full_name || 'Не указано'}</td>
+                                        <td>${teacher.position || 'Не указано'}</td>
+                                        <td>${teacher.academic_degree || 'Нет'}</td>
+                                        <td>${teacher.academic_title || 'Нет'}</td>
+                                        <td>${curriculum.lecture_hours || 0}</td>
+                                        <td>${curriculum.practice_hours || 0}</td>
+                                        <td>${teacher.total_experience || 0}</td>
+                                        <td>${teacher.teaching_experience || 0}</td>
+                                    </tr>`;
+                                });
+                            }
+                        });
+                    } 
+                    // Обработка для teachers (если curriculum пуст)
+                    else if (program.teachers && program.teachers.length > 0) {
+                        program.teachers.forEach(teacher => {
+                            tableBody.innerHTML += `
+                            <tr>
+                                <td>Не указано</td>
                                 <td>${teacher.full_name || 'Не указано'}</td>
                                 <td>${teacher.position || 'Не указано'}</td>
                                 <td>${teacher.academic_degree || 'Нет'}</td>
                                 <td>${teacher.academic_title || 'Нет'}</td>
-                                <td>${curriculum.lecture_hours || 0}</td>
-                                <td>${curriculum.practice_hours || 0}</td>
+                                <td>0</td>
+                                <td>0</td>
                                 <td>${teacher.total_experience || 0}</td>
                                 <td>${teacher.teaching_experience || 0}</td>
-                            `;
-                            tableBody.appendChild(row);
+                            </tr>`;
                         });
                     }
-                });
-        
+                }
+
                 document.getElementById('programDetails').style.display = 'block';
             } catch (error) {
-                console.error("Ошибка загрузки деталей образовательной программы:", error);
+                console.error("Ошибка:", error);
+                document.getElementById('disciplineTableBody').innerHTML = `
+                    <tr>
+                        <td colspan="9" class="text-center text-danger">
+                            Ошибка загрузки данных: ${error.message}
+                        </td>
+                    </tr>`;
             }
         }
 
