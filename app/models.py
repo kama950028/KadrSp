@@ -1,6 +1,13 @@
 from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, Table, Text, Float
 from sqlalchemy.orm import relationship
+from sqlalchemy.ext.declarative import declarative_base
 from app.database import Base
+
+Base = declarative_base()
+
+class User(Base):
+    __tablename__ = "users"
+    id = Column(Integer, primary_key=True)
 
 # Связь многие-ко-многим между преподавателями и образовательными программами
 teacher_program_association = Table(
@@ -32,16 +39,8 @@ class Teacher(Base):
     # disciplines = relationship("TaughtDiscipline", back_populates="teacher", cascade="all, delete", lazy="selectin")
     # Связь с дисциплинами через таблицу TaughtDiscipline
     taught_disciplines = relationship("TaughtDiscipline", back_populates="teacher")
-    disciplines = relationship(
-        "Curriculum",
-        secondary="taught_disciplines",
-        back_populates="teachers"
-    )
-    programs = relationship(
-        "EducationProgram", 
-        secondary=teacher_program_association,
-        back_populates="teachers"
-    )
+    disciplines = relationship("Curriculum", secondary="taught_disciplines", back_populates="teachers", lazy="joined")
+    programs = relationship("EducationProgram", secondary=teacher_program_association, back_populates="teachers")
 
 # Таблица квалификаций преподавателей
 class Qualification(Base):
@@ -71,16 +70,13 @@ class EducationProgram(Base):
 
     program_id = Column(Integer, primary_key=True, index=True)  # Уникальный идентификатор программы
     program_name = Column(String(255), unique=True, nullable=False)  # Полное название программы
-    short_name = Column(String(255), unique=True, nullable=True)  # Сокращенное название программы (может быть NULL)
+    short_name = Column(String(255), unique=True, nullable=True, index=True)  # Сокращенное название программы (может быть NULL)
     year = Column(Integer, nullable=False)  # Год прохождения программы
 
     # Связи
-    teachers = relationship(
-        "Teacher", 
-        secondary=teacher_program_association,
-        back_populates="programs", lazy="selectin"
-    )
+    teachers = relationship("Teacher", secondary=teacher_program_association, back_populates="programs", lazy="selectin")
     curriculum = relationship("Curriculum", back_populates="program")  # Связь с учебными планами
+
 
 # Таблица преподаваемых дисциплин
 # class TaughtDiscipline(Base):
@@ -123,16 +119,10 @@ class Curriculum(Base):
     program = relationship("EducationProgram", back_populates="curriculum")  # Связь с образовательной программой
     
     # Добавляем связь с преподавателями через таблицу TaughtDiscipline
-    teachers = relationship(
-        "Teacher",
-        secondary="taught_disciplines",
-        back_populates="disciplines"
-    )
+    teachers = relationship("Teacher", secondary="taught_disciplines", back_populates="disciplines", lazy="selectin")
     taught_disciplines = relationship("TaughtDiscipline", back_populates="curriculum")
     
     @property
     def program_short_name(self):
         return self.program.short_name if self.program else None
 
-# Добавить в EducationProgram
-EducationProgram.curriculum = relationship("Curriculum", back_populates="program")

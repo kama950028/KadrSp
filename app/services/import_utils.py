@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session, exc
 from app.models import Teacher, Qualification, EducationProgram, TaughtDiscipline, Curriculum
 import pandas as pd
 from sqlalchemy.dialects.postgresql import insert
+from io import BytesIO
 
 def parse_docx(file_path: str):
     doc = Document(file_path)
@@ -38,10 +39,9 @@ def parse_docx(file_path: str):
     return teachers
 
 
-
 def import_teachers_with_programs(db: Session, teachers_data: list):
     """
-    Импортирует преподавателей и привязывает их к образовательным программам.
+    Импортирует преподавателей, привязывает их к образовательным программам и дисциплинам.
     """
     for entry in teachers_data:
         # Проверяем, существует ли преподаватель
@@ -64,18 +64,20 @@ def import_teachers_with_programs(db: Session, teachers_data: list):
 
         # Обработка образовательных программ
         programs_raw = entry.get("programs_raw", "")
-        programs = [p.strip() for p in programs_raw.split(";") if p.strip()]  # Разделяем и очищаем программы
+        programs = [p.strip() for p in programs_raw.split(";") if p.strip()]  # Разделяем строку на отдельные программы
 
         for program_name in programs:
             # Проверяем, существует ли программа
             program = db.query(EducationProgram).filter_by(program_name=program_name).first()
             if not program:
-                # Генерация уникального short_name
-                base_short_name = program_name[:10].strip()  # Берем первые 10 символов
-                short_name = base_short_name
-                counter = 1
+                # Генерация short_name из профиля в скобках
+                profile_match = re.search(r"\((.*?)\)", program_name)
+                profile = profile_match.group(1) if profile_match else "UNKNOWN"
+                short_name = f"{program_name.split()[0]}_{''.join(word[0] for word in profile.split())}_2023"
 
                 # Проверяем уникальность short_name
+                counter = 1
+                base_short_name = short_name
                 while db.query(EducationProgram).filter_by(short_name=short_name).first():
                     short_name = f"{base_short_name}_{counter}"
                     counter += 1
@@ -90,7 +92,93 @@ def import_teachers_with_programs(db: Session, teachers_data: list):
             if program not in teacher.programs:
                 teacher.programs.append(program)
 
+        # Обработка дисциплин
+        disciplines_raw = entry.get("disciplines_raw", "")
+        disciplines = [d.strip() for d in disciplines_raw.split(";") if d.strip()]  # Разделяем строку на дисциплины
+
+        for discipline_name in disciplines:
+            # Приведение названия дисциплины к стандартному виду
+            normalized_name = discipline_name.strip().lower()
+        
+            # Проверяем, существует ли дисциплина с учётом регистра и лишних пробелов
+            discipline = db.query(Curriculum).filter(
+                Curriculum.discipline.ilike(f"%{normalized_name}%")
+            ).first()
+        
+            if not discipline:
+                # Создаем новую дисциплину
+                discipline = Curriculum(discipline=discipline_name.strip(), department="Не указано")
+                db.add(discipline)
+                db.commit()
+                db.refresh(discipline)
+        
+            # Привязываем преподавателя к дисциплине через TaughtDiscipline
+            taught_discipline = db.query(TaughtDiscipline).filter_by(
+                teacher_id=teacher.teacher_id,
+                curriculum_id=discipline.curriculum_id
+            ).first()
+            if not taught_discipline:
+                taught_discipline = TaughtDiscipline(
+                    teacher_id=teacher.teacher_id,
+                    curriculum_id=discipline.curriculum_id
+                )
+                db.add(taught_discipline)
+        
         db.commit()
+
+
+# def import_teachers_with_programs(db: Session, teachers_data: list):
+#     """
+#     Импортирует преподавателей и привязывает их к образовательным программам.
+#     """
+#     for entry in teachers_data:
+#         # Проверяем, существует ли преподаватель
+#         teacher = db.query(Teacher).filter_by(full_name=entry["full_name"]).first()
+#         if not teacher:
+#             # Создаем нового преподавателя
+#             teacher = Teacher(
+#                 full_name=entry["full_name"],
+#                 position=entry["position"],
+#                 education_level=entry["education_level"],
+#                 total_experience=entry.get("total_experience", 0),
+#                 teaching_experience=entry.get("teaching_experience", 0),
+#                 professional_experience=entry.get("professional_experience", 0),
+#                 academic_degree=entry.get("academic_degree"),
+#                 academic_title=entry.get("academic_title")
+#             )
+#             db.add(teacher)
+#             db.commit()
+#             db.refresh(teacher)
+
+#         # Обработка образовательных программ
+#         programs_raw = entry.get("programs_raw", "")
+#         programs = [p.strip() for p in programs_raw.split(";") if p.strip()]  # Разделяем и очищаем программы
+
+#         for program_name in programs:
+#             # Проверяем, существует ли программа
+#             program = db.query(EducationProgram).filter_by(program_name=program_name).first()
+#             if not program:
+#                 # Генерация уникального short_name
+#                 base_short_name = program_name[:10].strip()  # Берем первые 10 символов
+#                 short_name = base_short_name
+#                 counter = 1
+
+#                 # Проверяем уникальность short_name
+#                 while db.query(EducationProgram).filter_by(short_name=short_name).first():
+#                     short_name = f"{base_short_name}_{counter}"
+#                     counter += 1
+
+#                 # Создаем новую программу
+#                 program = EducationProgram(program_name=program_name, short_name=short_name, year=2023)
+#                 db.add(program)
+#                 db.commit()
+#                 db.refresh(program)
+
+#             # Привязываем преподавателя к программе
+#             if program not in teacher.programs:
+#                 teacher.programs.append(program)
+
+#         db.commit()
 
 
 # def determine_program_type(file_name: str) -> str:
@@ -296,123 +384,432 @@ def assign_teacher_to_program(db: Session, teacher_id: int, program_id: int):
 
 
 # def import_curriculum(db: Session, curriculum_data: list):
-#     try:
-#         # Проверка данных
-#         invalid = [d for d in curriculum_data if not isinstance(d.get('discipline'), str)]
-#         if invalid:
-#             raise ValueError(f"Найдено {len(invalid)} некорректных записей")
-
-#         # Очистка таблицы
-#         db.execute(delete(Curriculum))
-        
-#         # Связывание дисциплин с образовательными программами
-#         for entry in curriculum_data:
-#             program_short_name = entry.get('program_short_name')
-#             if program_short_name:
-#                 program = db.query(EducationProgram).filter_by(short_name=program_short_name).first()
-#                 if program:
-#                     entry['program_id'] = program.program_id
-#                 else:
-#                     print(f"Программа с short_name '{program_short_name}' не найдена")
-
-#         # Пакетная вставка
-#         db.bulk_insert_mappings(Curriculum, curriculum_data)
-#         db.commit()
-        
-#         print(f"Импортировано {len(curriculum_data)} записей")
-#         return True
-    
-#     except Exception as e:
-#         db.rollback()
-#         raise e
-    
-def import_curriculum(db: Session, curriculum_data: list):
-    """
-    Импортирует учебные планы и связывает их с выбранной образовательной программой.
-    """
     try:
-        # Получаем список доступных образовательных программ
-        programs = db.query(EducationProgram).all()
-        if not programs:
-            raise ValueError("Нет доступных образовательных программ. Сначала создайте их.")
-
-        # Выводим список программ для выбора
-        print("Доступные образовательные программы:")
-        for i, program in enumerate(programs, start=1):
-            print(f"{i}. {program.program_name} (short_name: {program.short_name}, year: {program.year})")
-
-        # Запрашиваем выбор пользователя
-        selected_index = int(input("Введите номер образовательной программы: ")) - 1
-        if selected_index < 0 or selected_index >= len(programs):
-            raise ValueError("Неверный выбор программы.")
-
-        selected_program = programs[selected_index]
-        print(f"Вы выбрали программу: {selected_program.program_name} (ID: {selected_program.program_id})")
-
-        # Добавляем program_id ко всем записям учебного плана
-        for entry in curriculum_data:
-            entry['program_id'] = selected_program.program_id
-
         # Проверка данных
         invalid = [d for d in curriculum_data if not isinstance(d.get('discipline'), str)]
         if invalid:
             raise ValueError(f"Найдено {len(invalid)} некорректных записей")
 
-        # Очистка таблицы (если требуется)
+        # Очистка таблицы
         db.execute(delete(Curriculum))
+        
+        # Связывание дисциплин с образовательными программами
+        for entry in curriculum_data:
+            program_short_name = entry.get('program_short_name')
+            if program_short_name:
+                program = db.query(EducationProgram).filter_by(short_name=program_short_name).first()
+                if program:
+                    entry['program_id'] = program.program_id
+                else:
+                    print(f"Программа с short_name '{program_short_name}' не найдена")
 
         # Пакетная вставка
         db.bulk_insert_mappings(Curriculum, curriculum_data)
         db.commit()
-
-        print(f"Импортировано {len(curriculum_data)} записей для программы '{selected_program.program_name}'")
+        
+        print(f"Импортировано {len(curriculum_data)} записей")
         return True
+    
+    except Exception as e:
+        db.rollback()
+        raise e
+    
+# def import_curriculum(db: Session, curriculum_data: list):
+#     """
+#     Импортирует учебные планы и связывает их с выбранной образовательной программой.
+#     """
+#     try:
+#         # Получаем список доступных образовательных программ
+#         programs = db.query(EducationProgram).all()
+#         if not programs:
+#             raise ValueError("Нет доступных образовательных программ. Сначала создайте их.")
+
+#         # Выводим список программ для выбора
+#         print("Доступные образовательные программы:")
+#         for i, program in enumerate(programs, start=1):
+#             print(f"{i}. {program.program_name} (short_name: {program.short_name}, year: {program.year})")
+
+#         # Запрашиваем выбор пользователя
+#         selected_index = int(input("Введите номер образовательной программы: ")) - 1
+#         if selected_index < 0 or selected_index >= len(programs):
+#             raise ValueError("Неверный выбор программы.")
+
+#         selected_program = programs[selected_index]
+#         print(f"Вы выбрали программу: {selected_program.program_name} (ID: {selected_program.program_id})")
+
+#         # Добавляем program_id ко всем записям учебного плана
+#         for entry in curriculum_data:
+#             entry['program_id'] = selected_program.program_id
+
+#         # Проверка данных
+#         invalid = [d for d in curriculum_data if not isinstance(d.get('discipline'), str)]
+#         if invalid:
+#             raise ValueError(f"Найдено {len(invalid)} некорректных записей")
+
+#         # Очистка таблицы (если требуется)
+#         db.execute(delete(Curriculum))
+
+#         # Пакетная вставка
+#         db.bulk_insert_mappings(Curriculum, curriculum_data)
+#         db.commit()
+
+#         print(f"Импортировано {len(curriculum_data)} записей для программы '{selected_program.program_name}'")
+#         return True
+
+#     except Exception as e:
+#         db.rollback()
+#         raise RuntimeError(f"Ошибка импорта учебных планов: {e}")
+
+
+from fastapi import HTTPException, UploadFile, BackgroundTasks
+from sqlalchemy.orm import Session
+from sqlalchemy import func
+import pandas as pd
+from app.models import Curriculum, EducationProgram, TaughtDiscipline, Teacher
+import re
+import os
+from datetime import datetime
+import uuid
+from typing import List, Dict
+
+def safe_convert(value, convert_func, default):
+    """Безопасное преобразование значений"""
+    try:
+        if pd.isna(value) or str(value).strip() == '':
+            return default
+        return convert_func(value)
+    except (ValueError, TypeError):
+        return default
+
+def normalize_string(text: str) -> str:
+    """Нормализация строк для сравнения"""
+    return re.sub(r'\s+', ' ', str(text).strip()).lower()
+
+async def parse_excel_file(file_path: str):
+    """Улучшенный парсинг Excel файла с обработкой ошибок"""
+    try:
+        # Проверяем, что файл существует и не пустой
+        if not os.path.exists(file_path):
+            raise ValueError("Файл не найден")
+        if os.path.getsize(file_path) == 0:
+            raise ValueError("Файл пустой")
+
+        # Читаем файл один раз в память
+        with open(file_path, 'rb') as f:
+            file_content = f.read()
+
+        # Пытаемся определить формат файла
+        try:
+            # Сначала пробуем openpyxl для .xlsx
+            df_svod = pd.read_excel(
+                io=file_content,
+                sheet_name='ПланСвод',
+                header=2,
+                engine='openpyxl'
+            )
+            df_plan = pd.read_excel(
+                io=file_content,
+                sheet_name='План',
+                header=2,
+                engine='openpyxl'
+            )
+        except Exception as e:
+            # Если не получилось, пробуем xlrd для старых .xls
+            try:
+                df_svod = pd.read_excel(
+                    io=file_content,
+                    sheet_name='ПланСвод',
+                    header=2,
+                    engine='xlrd'
+                )
+                df_plan = pd.read_excel(
+                    io=file_content,
+                    sheet_name='План',
+                    header=2,
+                    engine='xlrd'
+                )
+            except Exception as e:
+                raise ValueError(f"Не удалось прочитать файл как Excel: {str(e)}")
+
+        # Дальнейшая обработка данных...
+        df_svod.columns = df_svod.columns.str.strip().str.lower()
+        df_plan.columns = df_plan.columns.str.strip().str.lower()
+
+        required_columns = {'наименование', 'наименование.1'}
+        if not required_columns.issubset(df_svod.columns):
+            raise ValueError(f"Отсутствуют обязательные колонки: {required_columns}")
+
+        if 'считать в плане' not in df_plan.columns:
+            raise ValueError("Отсутствует колонка 'считать в плане'")
+
+        # Подготовка данных
+        df_svod_clean = df_svod[['наименование', 'наименование.1']].copy()
+        df_svod_clean.columns = ['дисциплина', 'кафедра']
+        df_svod_clean = df_svod_clean.dropna(subset=['дисциплина'])
+        df_svod_clean['кафедра'] = df_svod_clean['кафедра'].fillna('Не указано')
+
+        df_plan = df_plan[df_plan['считать в плане'] != '-']
+        df_plan = df_plan.rename(columns={'наименование': 'дисциплина'})
+
+        # Объединение данных
+        df_combined = pd.merge(
+            df_svod_clean,
+            df_plan,
+            on='дисциплина',
+            how='inner'
+        ).fillna(0)
+
+        return df_combined
+
+    except Exception as e:
+        raise ValueError(f"Ошибка парсинга Excel: {str(e)}")
+
+
+import os
+import uuid
+from io import BytesIO
+from fastapi import HTTPException, UploadFile
+from sqlalchemy.orm import Session
+from sqlalchemy import func
+import pandas as pd
+import re
+from datetime import datetime
+from app.models import Curriculum, EducationProgram, TaughtDiscipline, Teacher
+import logging
+from app.models import teacher_program_association
+
+
+logger = logging.getLogger(__name__)
+
+async def import_curriculum(
+    file_bytes: BytesIO,
+    filename: str,
+    db: Session,
+    background_tasks: BackgroundTasks
+):
+    """Функция импорта с правильной привязкой преподавателей к дисциплинам"""
+    try:
+        # 1. Парсинг Excel
+        try:
+            df_combined = await parse_excel_file_from_bytes(file_bytes)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+        # 2. Определение программы
+        filename_base = os.path.splitext(filename)[0]
+        program_code = filename_base.split('_')[0]
+        
+        program = db.query(EducationProgram)\
+            .filter(EducationProgram.short_name.ilike(f"{program_code}%"))\
+            .first()
+
+        if not program:
+            raise HTTPException(400, detail=f"Программа с кодом {program_code} не найдена")
+
+        # 3. Импорт данных
+        imported_count = 0
+        linked_teachers = 0
+        
+        # Очищаем старые дисциплины программы
+        db.query(Curriculum).filter(Curriculum.program_id == program.program_id).delete()
+        db.commit()
+
+        for _, row in df_combined.iterrows():
+            try:
+                discipline_name = str(row['дисциплина']).strip()
+                department = str(row.get('кафедра', 'Не указано')).strip()
+                
+                if not discipline_name or "дисциплины по выбору" in discipline_name.lower():
+                    continue
+
+                # Создаем дисциплину
+                discipline = Curriculum(
+                    discipline=discipline_name,
+                    department=department,
+                    semester=safe_convert(row.get('семестр'), int, None),
+                    lecture_hours=safe_convert(row.get('лекции'), float, 0),
+                    practice_hours=safe_convert(row.get('практики'), float, 0),
+                    exam_hours=safe_convert(row.get('экзамен'), float, 0),
+                    test_hours=safe_convert(row.get('зачет'), float, 0),
+                    course_project_hours=safe_convert(row.get('курсовые'), float, 0),
+                    total_practice_hours=safe_convert(row.get('практика'), float, 0),
+                    final_work_hours=safe_convert(row.get('вкр'), int, 0),
+                    program_id=program.program_id
+                )
+                db.add(discipline)
+                db.flush()
+                imported_count += 1
+
+                # Ищем преподавателей, которые уже ведут эту дисциплину по названию
+                existing_links = db.query(TaughtDiscipline)\
+                    .join(Curriculum)\
+                    .join(Teacher)\
+                    .filter(
+                        Curriculum.discipline.ilike(f"%{discipline_name}%"),
+                        Teacher.programs.any(program_id=program.program_id)
+                    )\
+                    .all()
+
+                # Привязываем только соответствующих преподавателей
+                for link in existing_links:
+                    if not db.query(TaughtDiscipline)\
+                        .filter_by(
+                            teacher_id=link.teacher_id,
+                            curriculum_id=discipline.curriculum_id
+                        )\
+                        .first():
+                        
+                        db.add(TaughtDiscipline(
+                            teacher_id=link.teacher_id,
+                            curriculum_id=discipline.curriculum_id
+                        ))
+                        linked_teachers += 1
+
+            except Exception as e:
+                logger.error(f"Ошибка обработки строки {discipline_name}: {str(e)}")
+                continue
+
+        db.commit()
+
+        return {
+            "status": "success",
+            "message": "Учебный план успешно импортирован",
+            "details": {
+                "imported_disciplines": imported_count,
+                "linked_teachers": linked_teachers,
+                "program_id": program.program_id,
+                "program_name": program.program_name,
+                "file": filename
+            }
+        }
 
     except Exception as e:
         db.rollback()
-        raise RuntimeError(f"Ошибка импорта учебных планов: {e}")
+        logger.error(f"Ошибка импорта: {str(e)}", exc_info=True)
+        raise HTTPException(500, detail=f"Ошибка импорта: {str(e)}")
+
+
+async def parse_excel_file_from_bytes(file_bytes: BytesIO):
+    """Парсинг Excel из BytesIO"""
+    try:
+        # Пытаемся определить формат файла
+        try:
+            # Сначала пробуем openpyxl для .xlsx
+            df_svod = pd.read_excel(
+                file_bytes,
+                sheet_name='ПланСвод',
+                header=2,
+                engine='openpyxl'
+            )
+            df_plan = pd.read_excel(
+                file_bytes,
+                sheet_name='План',
+                header=2,
+                engine='openpyxl'
+            )
+        except Exception as e:
+            # Если не получилось, пробуем xlrd для старых .xls
+            file_bytes.seek(0)  # Возвращаем указатель в начало
+            try:
+                df_svod = pd.read_excel(
+                    file_bytes,
+                    sheet_name='ПланСвод',
+                    header=2,
+                    engine='xlrd'
+                )
+                df_plan = pd.read_excel(
+                    file_bytes,
+                    sheet_name='План',
+                    header=2,
+                    engine='xlrd'
+                )
+            except Exception as e:
+                raise ValueError(f"Не удалось прочитать файл как Excel: {str(e)}")
+
+        # Дальнейшая обработка данных
+        df_svod.columns = df_svod.columns.str.strip().str.lower()
+        df_plan.columns = df_plan.columns.str.strip().str.lower()
+
+        required_columns = {'наименование', 'наименование.1'}
+        if not required_columns.issubset(df_svod.columns):
+            raise ValueError(f"Отсутствуют обязательные колонки: {required_columns}")
+
+        if 'считать в плане' not in df_plan.columns:
+            raise ValueError("Отсутствует колонка 'считать в плане'")
+
+        # Подготовка данных
+        df_svod_clean = df_svod[['наименование', 'наименование.1']].copy()
+        df_svod_clean.columns = ['дисциплина', 'кафедра']
+        df_svod_clean = df_svod_clean.dropna(subset=['дисциплина'])
+        df_svod_clean['кафедра'] = df_svod_clean['кафедра'].fillna('Не указано')
+
+        df_plan = df_plan[df_plan['считать в плане'] != '-']
+        df_plan = df_plan.rename(columns={'наименование': 'дисциплина'})
+
+        # Объединение данных
+        df_combined = pd.merge(
+            df_svod_clean,
+            df_plan,
+            on='дисциплина',
+            how='inner'
+        ).fillna(0)
+
+        return df_combined
+    except Exception as e:
+        raise ValueError(f"Ошибка парсинга Excel: {str(e)}")
+
+
+def safe_convert(value, convert_func, default):
+    """Безопасное преобразование значений"""
+    try:
+        if pd.isna(value) or str(value).strip() == '':
+            return default
+        return convert_func(value)
+    except (ValueError, TypeError):
+        return default
+
 
 
 def check_duplicates_in_csv(file_path: str):
     """
-    Проверяет наличие дубликатов в столбце short_name в CSV-файле.
+    Проверяет наличие дубликатов в столбце program_name в CSV-файле.
     """
     with open(file_path, mode='r', encoding='utf-8') as file:
         reader = csv.DictReader(file)
-        short_names = set()
+        program_names = set()
         duplicates = set()
-        
+
         for row in reader:
-            short_name = row['short_name'].strip()
-            if short_name in short_names:
-                duplicates.add(short_name)
+            program_name = row['program_name'].strip()
+            if program_name in program_names:
+                duplicates.add(program_name)
             else:
-                short_names.add(short_name)
-        
+                program_names.add(program_name)
+
         if duplicates:
             raise ValueError(f"Найдены дубликаты в CSV-файле: {', '.join(duplicates)}")
         
 def remove_duplicates_from_csv(file_path: str, output_file_path: str):
     """
-    Удаляет дубликаты из CSV-файла на основе поля short_name и сохраняет результат в новый файл.
+    Удаляет дубликаты из CSV-файла на основе поля program_name и сохраняет результат в новый файл.
     """
     try:
         with open(file_path, mode='r', encoding='utf-8') as file:
             reader = csv.DictReader(file)
             unique_rows = {}
-            
+
             for row in reader:
-                short_name = row['short_name'].strip()
-                # Если short_name уже есть, пропускаем запись
-                if short_name not in unique_rows:
-                    unique_rows[short_name] = row
-            
+                program_name = row['program_name'].strip()
+                # Если program_name уже есть, пропускаем запись
+                if program_name not in unique_rows:
+                    unique_rows[program_name] = row
+
         # Сохраняем уникальные записи в новый файл
         with open(output_file_path, mode='w', encoding='utf-8', newline='') as output_file:
             writer = csv.DictWriter(output_file, fieldnames=reader.fieldnames)
             writer.writeheader()
             writer.writerows(unique_rows.values())
-        
+
         print(f"Дубликаты удалены. Уникальные записи сохранены в файл: {output_file_path}")
     except Exception as e:
         raise RuntimeError(f"Ошибка при удалении дубликатов: {e}")
@@ -420,26 +817,37 @@ def remove_duplicates_from_csv(file_path: str, output_file_path: str):
 def import_education_programs(file_path: str, db: Session):
     """
     Импортирует образовательные программы из CSV-файла в таблицу education_programs.
-    Если программа с таким short_name уже существует, она обновляется.
+    Если программа с таким program_name уже существует, она обновляется.
     """
     try:
         # Удаляем дубликаты перед импортом
         cleaned_file_path = "cleaned_" + file_path
         remove_duplicates_from_csv(file_path, cleaned_file_path)
-        
+
         with open(cleaned_file_path, mode='r', encoding='utf-8') as file:
             reader = csv.DictReader(file)
-            
+
             for row in reader:
                 program_name = row['program_name'].strip()
-                short_name = row['short_name'].strip()
                 year = int(row['year'])
 
-                # Проверяем, существует ли запись с таким short_name
-                existing_program = db.query(EducationProgram).filter_by(short_name=short_name).first()
+                # Генерация short_name из профиля в скобках
+                profile_match = re.search(r"\((.*?)\)", program_name)
+                profile = profile_match.group(1) if profile_match else "UNKNOWN"
+                short_name = f"{program_name.split()[0]}_{''.join(word[0] for word in profile.split())}_{year}"
+
+                # Проверяем уникальность short_name
+                counter = 1
+                base_short_name = short_name
+                while db.query(EducationProgram).filter_by(short_name=short_name).first():
+                    short_name = f"{base_short_name}_{counter}"
+                    counter += 1
+
+                # Проверяем, существует ли запись с таким program_name
+                existing_program = db.query(EducationProgram).filter_by(program_name=program_name).first()
                 if existing_program:
                     # Обновляем существующую запись
-                    existing_program.program_name = program_name
+                    existing_program.short_name = short_name
                     existing_program.year = year
                 else:
                     # Добавляем новую запись
@@ -449,7 +857,7 @@ def import_education_programs(file_path: str, db: Session):
                         year=year
                     )
                     db.add(new_program)
-            
+
             db.commit()
             print("Импорт завершен.")
     except Exception as e:

@@ -66,9 +66,21 @@
                 const response = await fetch('/curriculum/EducationProgram');
                 if (!response.ok) throw new Error(`Ошибка HTTP: ${response.status}`);
                 
-                window.programs = await response.json();
-                console.log("Все программы:", window.programs);
-
+                // Загружаем все программы
+                const allPrograms = await response.json();
+    
+                // Фильтруем программы, у которых есть дисциплины
+                const filteredPrograms = allPrograms.filter(program => program.curriculum && program.curriculum.length > 0);
+    
+                // Сортируем программы по названию (program_name)
+                filteredPrograms.sort((a, b) => a.program_name.localeCompare(b.program_name));
+    
+                // Сохраняем отфильтрованные и отсортированные программы в глобальную переменную
+                window.programs = filteredPrograms;
+    
+                console.log("Отфильтрованные и отсортированные программы:", window.programs);
+    
+                // Заполняем выпадающий список
                 const select = document.getElementById('programSelect');
                 select.innerHTML = '<option value="">-- Выберите программу --</option>';
                 
@@ -83,7 +95,7 @@
                 alert('Не удалось загрузить список программ');
             }
         }
-        
+   
 
         // Загрузка данных по выбранной образовательной программе
         async function fetchProgramDetails() {

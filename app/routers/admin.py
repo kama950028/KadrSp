@@ -14,24 +14,24 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 @router.delete("/clear-db")
 def clear_database(db: Session = Depends(get_db)):
     try:
-        # Удаляем все записи из таблиц
-        db.query(Qualification).delete()
-        db.query(TaughtDiscipline).delete()
-        db.query(EducationProgram).delete()
-        db.query(Teacher).delete()
+        # Удаляем записи из зависимых таблиц
         db.query(Curriculum).delete()
-        
-        # Сбрасываем последовательность ID для таблицы teachers
-        db.execute(text("ALTER SEQUENCE teachers_teacher_id_seq RESTART WITH 1"))
-        db.execute(text("ALTER SEQUENCE curriculum_id_seq RESTART WITH 1"))
-        
-        
+        db.query(TaughtDiscipline).delete()
+        db.query(Qualification).delete()
+        db.query(Retraining).delete()
+        db.query(Teacher).delete()
+
+        # Удаляем записи из основной таблицы
+        db.query(EducationProgram).delete()
+
+        # Сбрасываем последовательности ID (используем правильные имена из pg_class)
+        db.execute(text("TRUNCATE TABLE education_programs, teachers, curriculum, qualifications, retrainings, taught_disciplines RESTART IDENTITY CASCADE"))
+
         db.commit()
         return {"message": "Все данные удалены, ID сброшены"}
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
-    
+        raise HTTPException(status_code=500, detail=str(e))    
 
 @router.post("/upload-programs")
 def upload_programs(file: UploadFile = File(...), db: Session = Depends(get_db)):

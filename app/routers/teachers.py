@@ -39,7 +39,7 @@ def create_teacher(teacher: TeacherCreate, db: Session = Depends(get_db)):
 
 @router.get("/teachers")
 def get_teachers(db: Session = Depends(get_db)):
-    teachers = db.query(Teacher).all()
+    teachers = db.query(Teacher).options(joinedload(Teacher.programs)).all()
     return [
         {
             "teacher_id": teacher.teacher_id,
@@ -51,12 +51,19 @@ def get_teachers(db: Session = Depends(get_db)):
             "education_level": teacher.education_level,
             "academic_degree": teacher.academic_degree,
             "academic_title": teacher.academic_title,
-            "disciplines_raw": ", ".join([d.discipline_name for d in teacher.disciplines]),
+            "disciplines_raw": ", ".join([d.discipline for d in teacher.disciplines]),  # Исправлено
             "qualifications_raw": ", ".join([q.program_name for q in teacher.qualifications]),
-            "programs_raw": ", ".join([p.program_name for p in teacher.programs]),
+            "programs": [
+                {
+                    "program_id": p.program_id,
+                    "program_name": p.program_name
+                }
+                for p in teacher.programs
+            ],  # Добавлено program_id
         }
         for teacher in teachers
     ]
+
 
 @router.get("/teachers/{teacher_id}", response_model=TeacherResponse)
 def get_teacher(teacher_id: int, db: Session = Depends(get_db)):
@@ -103,6 +110,7 @@ def import_teachers(file: UploadFile = File(...), db: Session = Depends(get_db))
         os.remove(temp_file)
 
     return {"message": "Преподаватели успешно импортированы"}
+
 
 
 

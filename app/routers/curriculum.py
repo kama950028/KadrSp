@@ -1,11 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session, joinedload
 from typing import Optional, List
-from app.models import Curriculum, EducationProgram
+from app.models import Curriculum, EducationProgram, TaughtDiscipline, Teacher
 from app.database import get_db
-from app.schemas import CurriculumBase
+from app.schemas import CurriculumBase, EducationProgramBase
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
+from sqlalchemy.orm import selectinload
+
 
 templates = Jinja2Templates(directory="app/templates")
 
@@ -18,22 +20,77 @@ def curriculum_view(request: Request):
     """
     return templates.TemplateResponse("curriculum_view.html", {"request": request})
 
-@router.get("/", response_model=List[CurriculumBase])
-def get_curriculum(curriculum_id: Optional[int] = None, db: Session = Depends(get_db)):
-    """
-    Получить список дисциплин учебных планов.
-    Если указан `curriculum_id`, возвращает конкретную дисциплину учебного плана.
-    """
-    query = db.query(Curriculum).options(joinedload(Curriculum.program))
+# @router.get("/", response_model=List[CurriculumBase])
+# def get_curriculum(curriculum_id: Optional[int] = None, db: Session = Depends(get_db)):
+#     """
+#     Получить список дисциплин учебных планов.
+#     Если указан `curriculum_id`, возвращает конкретную дисциплину учебного плана.
+#     """
+#     query = db.query(Curriculum).options(joinedload(Curriculum.program))
     
+#     if curriculum_id:
+#         curriculum = query.filter(Curriculum.curriculum_id == curriculum_id).first()
+#         if not curriculum:
+#             raise HTTPException(status_code=404, detail="Учебный план не найден")
+#         return [curriculum]
+    
+#     return query.all()
+
+# @router.get("/", response_model=List[CurriculumBase])
+# def get_curriculum(curriculum_id: Optional[int] = None, db: Session = Depends(get_db)):
+#     """
+#     Получить список дисциплин учебных планов с привязанными преподавателями.
+#     """
+#     query = db.query(Curriculum).options(
+#         joinedload(Curriculum.teachers)
+#     )
+
+#     if curriculum_id:
+#         curriculum = query.filter(Curriculum.curriculum_id == curriculum_id).first()
+#         if not curriculum:
+#             raise HTTPException(status_code=404, detail="Учебный план не найден")
+#         return [curriculum]
+
+#     return query.all()
+
+@router.get("/", response_model=List[CurriculumBase])
+def get_curriculum(
+    curriculum_id: Optional[int] = None,
+    program_id: Optional[int] = None,
+    db: Session = Depends(get_db)
+):
+    """
+    Получить список дисциплин учебных планов с привязанными преподавателями.
+    """
+    # Загружаем дисциплины с привязанными преподавателями
+    query = db.query(Curriculum).options(
+        joinedload(Curriculum.teachers)  # Загружаем связанных преподавателей
+    )
+
+    # Фильтрация по curriculum_id
     if curriculum_id:
         curriculum = query.filter(Curriculum.curriculum_id == curriculum_id).first()
         if not curriculum:
             raise HTTPException(status_code=404, detail="Учебный план не найден")
         return [curriculum]
-    
-    return query.all()
 
+    # Фильтрация по program_id
+    if program_id:
+        query = query.filter(Curriculum.program_id == program_id)
+
+    # Отладка: вывод данных для проверки
+    results = query.all()
+    print("\nDEBUG INFO:")
+    for curriculum in results:
+        print(f"Discipline: {curriculum.discipline}")
+        if hasattr(curriculum, 'teachers'):
+            print(f"  Teachers count: {len(curriculum.teachers)}")
+            for teacher in curriculum.teachers:
+                print(f"    - {teacher.full_name}")
+        else:
+            print("  No teachers attribute!")
+
+    return results
 
 
 # @router.get("/EducationProgram")
@@ -63,9 +120,93 @@ def get_curriculum(curriculum_id: Optional[int] = None, db: Session = Depends(ge
 
 
 
-@router.get("/EducationProgram")
+
+@router.get("/EducationProgram", response_model=List[EducationProgramBase])
 def get_education_programs(db: Session = Depends(get_db)):
     programs = db.query(EducationProgram).options(
-        joinedload(EducationProgram.curriculum).joinedload(Curriculum.teachers)
+    selectinload(EducationProgram.curriculum).selectinload(Curriculum.teachers)
     ).all()
+    
+    # Отладочный вывод
+    for program in programs:
+        print(f"\nПрограмма: {program.program_name}")
+        for curr in program.curriculum:
+            print(f"  Дисциплина: {curr.discipline}")
+            print(f"  Преподаватели: {[t.full_name for t in curr.teachers]}")
+    
     return programs
+
+
+@router.get("/test_teachers/{curriculum_id}")
+def test_teachers(curriculum_id: int, db: Session = Depends(get_db)):
+    curriculum = db.query(Curriculum).options(
+        selectinload(Curriculum.teachers)
+    ).filter(Curriculum.curriculum_id == curriculum_id).first()
+    
+    if not curriculum:
+        raise HTTPException(404, "Discipline not found")
+    
+    return {
+        "discipline": curriculum.discipline,
+        "teachers": [t.full_name for t in curriculum.teachers]
+    }
+
+
+@router.get("/debug_teachers")
+def debug_teachers(db: Session = Depends(get_db)):
+    """
+    Возвращает все связи преподавателей с дисциплинами, включая program_id.
+    Полезно для отладки отсутствующих связей в основном API.
+    """
+    # Получаем все связи через JOIN с дополнительной информацией
+    query = db.query(
+        TaughtDiscipline,
+        Teacher,
+        Curriculum,
+        EducationProgram.program_id  # Добавляем program_id
+    ).join(
+        Teacher, TaughtDiscipline.teacher_id == Teacher.teacher_id
+    ).join(
+        Curriculum, TaughtDiscipline.curriculum_id == Curriculum.curriculum_id
+    ).join(
+        EducationProgram, Curriculum.program_id == EducationProgram.program_id
+    )
+    
+    results = query.all()
+    
+    return [
+        {
+            "program_id": program_id,  # Новое поле
+            "program_name": curriculum.program.program_name if curriculum.program else None,
+            "discipline": curriculum.discipline,
+            "department": curriculum.department,
+            "curriculum_id": link.curriculum_id,
+            "teacher": {
+                "teacher_id": teacher.teacher_id,
+                "full_name": teacher.full_name,
+                "position": teacher.position
+            }
+        }
+        for link, teacher, curriculum, program_id in results
+    ]
+
+# @router.get("/EducationProgram", response_model=List[EducationProgramBase])
+# def get_education_programs(db: Session = Depends(get_db)):
+#     programs = db.query(EducationProgram).options(
+#         joinedload(EducationProgram.curriculum).joinedload(Curriculum.teachers)
+#     ).all()
+    
+#     # Отладка
+#     print("\nDEBUG INFO:")
+#     for program in programs:
+#         print(f"\nProgram: {program.program_name}")
+#         for curr in program.curriculum:
+#             print(f"  Discipline: {curr.discipline}")
+#             if hasattr(curr, 'teachers'):
+#                 print(f"  Teachers count: {len(curr.teachers)}")
+#                 for teacher in curr.teachers:
+#                     print(f"    - {teacher.full_name}")
+#             else:
+#                 print("  No teachers attribute!")
+    
+#     return programs
