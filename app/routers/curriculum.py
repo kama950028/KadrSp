@@ -249,7 +249,7 @@ async def get_all_programs(db: Session = Depends(get_db)):
     try:
         programs = (
             db.query(EducationProgram)
-            .options(joinedload(EducationProgram.teachers))
+            .join(EducationProgram.teachers)
             .order_by(EducationProgram.program_name)
             .all()
         )
