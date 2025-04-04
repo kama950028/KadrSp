@@ -4,6 +4,10 @@ from fastapi.templating import Jinja2Templates
 from app.routers import teachers, import_router, admin, curriculum
 from app.database import engine, Base
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, HTMLResponse
+from pathlib import Path
+
+
 
 # Создаем таблицы в БД (в реальном проекте используйте миграции!)
 Base.metadata.create_all(bind=engine)
@@ -49,3 +53,10 @@ def curriculum_view_page(request: Request):
     Страница образовательных программ.
     """
     return templates.TemplateResponse("curriculum_view.html", {"request": request})
+
+@app.get("/curriculum/up", response_class=HTMLResponse)
+def curriculum_up_page(request: Request):
+    """
+    Страница образовательных программ.
+    """
+    return templates.TemplateResponse("curriculum_up.html", {"request": request})

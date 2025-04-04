@@ -6,6 +6,7 @@ from app.models import Teacher, Qualification, EducationProgram, TaughtDisciplin
 import pandas as pd
 from sqlalchemy.dialects.postgresql import insert
 from io import BytesIO
+import traceback
 
 def parse_docx(file_path: str):
     doc = Document(file_path)
@@ -212,156 +213,6 @@ def parse_semester(semester_str):
     return semesters
 
 
-def parse_excel(file_path: str) -> list:
-    # Чтение данных из листов
-    df_svod = pd.read_excel(file_path, sheet_name='ПланСвод', header=2)
-    df_plan = pd.read_excel(file_path, sheet_name='План', header=2)
-
-    # Вывод названий столбцов для отладки
-    print("Заголовки столбцов в листе 'ПланСвод':", df_svod.columns.tolist())
-    print("Заголовки столбцов в листе 'План':", df_plan.columns.tolist())
-
-    # Приведение заголовков к стандартному виду
-    df_svod.columns = df_svod.columns.str.strip().str.lower()
-    df_plan.columns = df_plan.columns.str.strip().str.lower()
-
-    # Обработка листа "ПланСвод"
-    df_svod_clean = df_svod[['наименование', 'наименование.1']].copy()
-    df_svod_clean.columns = ['дисциплина', 'кафедра']
-    df_svod_clean = df_svod_clean[
-        ~df_svod_clean['дисциплина'].str.contains("дисциплины по выбору", case=False, na=False)
-    ]
-    df_svod_clean = df_svod_clean.fillna({'кафедра': 'Кафедра не указана'})
-
-    # Обработка листа "План"
-    df_plan = df_plan[df_plan['считать в плане'] != '-']
-    df_plan = df_plan.rename(columns={'наименование': 'дисциплина'})
-
-    # Объединение данных
-    df_combined = pd.merge(
-        df_svod_clean,
-        df_plan,
-        on='дисциплина',
-        how='inner'
-    ).fillna(0)
-
-    # Вспомогательные функции
-    def safe_float(value, default=0.0):
-        try:
-            return round(float(value), 2)
-        except (ValueError, TypeError):
-            return default
-
-    def sum_columns(df, base_name):
-        """Суммирует значения всех столбцов, начинающихся с base_name"""
-        matching_columns = [col for col in df.columns if col.startswith(base_name)]
-        return df[matching_columns].sum(axis=1)
-
-    # Суммируем значения для лекций, практик и других столбцов
-    df_combined['лекции'] = sum_columns(df_combined, 'лек')
-    df_combined['практики'] = sum_columns(df_combined, 'пр')
-    df_combined['лабораторные'] = sum_columns(df_combined, 'лаб')
-    df_combined['курсовые'] = sum_columns(df_combined, 'кп') + sum_columns(df_combined, 'кр')
-
-    # Обработка данных
-    curriculum_data = []
-    for _, row in df_combined.iterrows():
-        discipline = str(row.get('дисциплина', '')).strip()
-
-        # Пропускаем строки с некорректным названием дисциплины
-        if not discipline or discipline == "0":
-            print(f"Пропущена дисциплина с некорректным названием: {discipline}")
-            continue
-        
-        # Извлечение семестров из столбцов
-        semesters = set()
-        for col in ['экза мен', 'зачет', 'зачет с оц.']:
-            semesters.update(parse_semester(row.get(col, None)))
-
-        # Если семестры не указаны, добавляем запись без семестра
-        if not semesters:
-            semesters = [None]
-            
-        # Проверяем, содержит ли дисциплина слово "практика"
-        if "практика" in discipline.lower():
-            for semester in semesters:
-                exam_hours = safe_float(row.get('конт. раб.', 0))  # Берем часы из столбца "Конт. раб."
-                entry = {
-                    'discipline': discipline,
-                    'department': str(row.get('кафедра', 'Кафедра не указана')),
-                    'semester': semester,
-                    'final_work_hours': 0,
-                    'lecture_hours': 0.0,
-                    'practice_hours': 0.0,
-                    'test_hours': 0.0,
-                    'exam_hours': exam_hours,  # Часы из "Конт. раб."
-                    'course_project_hours': 0.0,
-                    'total_practice_hours': exam_hours  # Общее время практики равно exam_hours
-                }
-                curriculum_data.append(entry)
-            continue  # Пропускаем стандартную обработку
-
-        # Проверяем, содержит ли дисциплина слова "Выполнение и защита выпускной"
-        if "выполнение и защита выпускной" in discipline.lower():
-            for semester in semesters:
-                final_work_hours = 18  # Пример значения для выпускной работы
-                entry = {
-                    'discipline': discipline,
-                    'department': str(row.get('кафедра', 'Кафедра не указана')),
-                    'semester': semester,
-                    'final_work_hours': final_work_hours,
-                    'lecture_hours': 0.0,
-                    'practice_hours': 0.0,
-                    'test_hours': 0.0,
-                    'exam_hours': 0.0,
-                    'course_project_hours': 0.0,
-                    'total_practice_hours': final_work_hours  # Суммируем данные (равно final_work_hours)
-                }
-                curriculum_data.append(entry)
-            continue  # Пропускаем стандартную обработку
-
-        # Создаем запись для каждого семестра
-        for semester in semesters:
-            # Расчет часов для зачета и экзамена
-            test_hours = 0.25 if row.get('зачет', 0) > 0 else 0
-            exam_hours = 2.35 if row.get('экза мен', 0) > 0 else 0
-
-            entry = {
-                'discipline': discipline,
-                'department': str(row.get('кафедра', 'Кафедра не указана')),
-                'lecture_hours': safe_float(row.get('лекции', 0)),
-                'practice_hours': safe_float(row.get('практики', 0)),
-                'test_hours': test_hours,
-                'exam_hours': exam_hours,
-                'course_project_hours': safe_float(row.get('курсовые', 0)),
-                'total_practice_hours': 0.0,
-                'final_work_hours': 0,
-                'semester': semester  # Добавляем семестр
-            }
-
-            # Расчет общего времени практики
-            entry['total_practice_hours'] = round(
-                entry['lecture_hours'] +
-                entry['practice_hours'] +
-                entry['test_hours'] +
-                entry['exam_hours'],
-                2
-            )
-
-            # Обработка выпускной работы
-            if "выполнение и защита выпускной квалификационной работы" in entry['discipline'].lower():
-                entry['final_work_hours'] = 18  # Пример для бакалавриата
-
-            # Замена NaN/Inf
-            for key in entry:
-                if isinstance(entry[key], float):
-                    if math.isnan(entry[key]) or math.isinf(entry[key]):
-                        entry[key] = 0.0
-
-            curriculum_data.append(entry)
-
-    return curriculum_data
-
 def assign_teacher_to_program(db: Session, teacher_id: int, program_id: int):
     """
     Привязывает преподавателя к образовательной программе.
@@ -384,35 +235,35 @@ def assign_teacher_to_program(db: Session, teacher_id: int, program_id: int):
 
 
 # def import_curriculum(db: Session, curriculum_data: list):
-    try:
-        # Проверка данных
-        invalid = [d for d in curriculum_data if not isinstance(d.get('discipline'), str)]
-        if invalid:
-            raise ValueError(f"Найдено {len(invalid)} некорректных записей")
+    # try:
+    #     # Проверка данных
+    #     invalid = [d for d in curriculum_data if not isinstance(d.get('discipline'), str)]
+    #     if invalid:
+    #         raise ValueError(f"Найдено {len(invalid)} некорректных записей")
 
-        # Очистка таблицы
-        db.execute(delete(Curriculum))
+    #     # Очистка таблицы
+    #     db.execute(delete(Curriculum))
         
-        # Связывание дисциплин с образовательными программами
-        for entry in curriculum_data:
-            program_short_name = entry.get('program_short_name')
-            if program_short_name:
-                program = db.query(EducationProgram).filter_by(short_name=program_short_name).first()
-                if program:
-                    entry['program_id'] = program.program_id
-                else:
-                    print(f"Программа с short_name '{program_short_name}' не найдена")
+    #     # Связывание дисциплин с образовательными программами
+    #     for entry in curriculum_data:
+    #         program_short_name = entry.get('program_short_name')
+    #         if program_short_name:
+    #             program = db.query(EducationProgram).filter_by(short_name=program_short_name).first()
+    #             if program:
+    #                 entry['program_id'] = program.program_id
+    #             else:
+    #                 print(f"Программа с short_name '{program_short_name}' не найдена")
 
-        # Пакетная вставка
-        db.bulk_insert_mappings(Curriculum, curriculum_data)
-        db.commit()
+    #     # Пакетная вставка
+    #     db.bulk_insert_mappings(Curriculum, curriculum_data)
+    #     db.commit()
         
-        print(f"Импортировано {len(curriculum_data)} записей")
-        return True
+    #     print(f"Импортировано {len(curriculum_data)} записей")
+    #     return True
     
-    except Exception as e:
-        db.rollback()
-        raise e
+    # except Exception as e:
+    #     db.rollback()
+    #     raise e
     
 # def import_curriculum(db: Session, curriculum_data: list):
 #     """
@@ -461,235 +312,358 @@ def assign_teacher_to_program(db: Session, teacher_id: int, program_id: int):
 #         raise RuntimeError(f"Ошибка импорта учебных планов: {e}")
 
 
+# def parse_excel(file_path: str) -> list:
+#     try:
+#         df_svod = pd.read_excel(file_path, sheet_name='ПланСвод', header=2)
+#         df_plan = pd.read_excel(file_path, sheet_name='План', header=2)
+        
+#         # Приведение названий столбцов
+#         df_svod.columns = df_svod.columns.str.strip().str.lower()
+#         df_plan.columns = df_plan.columns.str.strip().str.lower()
+        
+#         # Обязательные проверки
+#         required_columns = {'наименование', 'наименование.1'}
+#         if not required_columns.issubset(df_svod.columns):
+#             raise ValueError("Отсутствуют обязательные колонки в листе ПланСвод")
+        
+#         # Основная обработка
+#         df_combined = pd.merge(
+#             df_svod[['наименование', 'наименование.1']].rename(columns={'наименование': 'дисциплина', 'наименование.1': 'кафедра'}),
+#             df_plan,
+#             on='дисциплина',
+#             how='inner'
+#         ).fillna(0)
+        
+#         # Отладочный вывод первых 3 строк
+#         print("Первые 3 строки данных:")
+#         print(df_combined.head(3).to_string())
+        
+#         curriculum_data = []
+#         for _, row in df_combined.iterrows():
+#             try:
+#                 entry = {
+#                     'discipline': str(row['дисциплина']).strip(),
+#                     'department': str(row['кафедра']).strip(),
+#                     'semester': safe_convert(row.get('семестр'), int, None),
+#                     'lecture_hours': safe_convert(row.get('лекции', 0), float, 0),
+#                     'practice_hours': safe_convert(row.get('практики', 0), float, 0),
+#                     'exam_hours': safe_convert(row.get('экзамен', 0), float, 0),
+#                     'test_hours': safe_convert(row.get('зачет', 0), float, 0),
+#                     'course_project_hours': safe_convert(row.get('курсовые', 0), float, 0),
+#                     'total_practice_hours': safe_convert(row.get('практика', 0), float, 0),
+#                     'final_work_hours': safe_convert(row.get('вкр', 0), int, 0)
+#                 }
+#                 curriculum_data.append(entry)
+#             except Exception as e:
+#                 print(f"Ошибка обработки строки: {e}")
+#                 continue
+                
+#         return curriculum_data
+        
+#     except Exception as e:
+#         print(f"Ошибка парсинга Excel: {e}")
+#         raise
+
+
+# import_utils.py
 from fastapi import HTTPException, UploadFile, BackgroundTasks
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, and_
 import pandas as pd
-from app.models import Curriculum, EducationProgram, TaughtDiscipline, Teacher
 import re
 import os
 from datetime import datetime
-import uuid
 from typing import List, Dict
-
-def safe_convert(value, convert_func, default):
-    """Безопасное преобразование значений"""
-    try:
-        if pd.isna(value) or str(value).strip() == '':
-            return default
-        return convert_func(value)
-    except (ValueError, TypeError):
-        return default
-
-def normalize_string(text: str) -> str:
-    """Нормализация строк для сравнения"""
-    return re.sub(r'\s+', ' ', str(text).strip()).lower()
-
-async def parse_excel_file(file_path: str):
-    """Улучшенный парсинг Excel файла с обработкой ошибок"""
-    try:
-        # Проверяем, что файл существует и не пустой
-        if not os.path.exists(file_path):
-            raise ValueError("Файл не найден")
-        if os.path.getsize(file_path) == 0:
-            raise ValueError("Файл пустой")
-
-        # Читаем файл один раз в память
-        with open(file_path, 'rb') as f:
-            file_content = f.read()
-
-        # Пытаемся определить формат файла
-        try:
-            # Сначала пробуем openpyxl для .xlsx
-            df_svod = pd.read_excel(
-                io=file_content,
-                sheet_name='ПланСвод',
-                header=2,
-                engine='openpyxl'
-            )
-            df_plan = pd.read_excel(
-                io=file_content,
-                sheet_name='План',
-                header=2,
-                engine='openpyxl'
-            )
-        except Exception as e:
-            # Если не получилось, пробуем xlrd для старых .xls
-            try:
-                df_svod = pd.read_excel(
-                    io=file_content,
-                    sheet_name='ПланСвод',
-                    header=2,
-                    engine='xlrd'
-                )
-                df_plan = pd.read_excel(
-                    io=file_content,
-                    sheet_name='План',
-                    header=2,
-                    engine='xlrd'
-                )
-            except Exception as e:
-                raise ValueError(f"Не удалось прочитать файл как Excel: {str(e)}")
-
-        # Дальнейшая обработка данных...
-        df_svod.columns = df_svod.columns.str.strip().str.lower()
-        df_plan.columns = df_plan.columns.str.strip().str.lower()
-
-        required_columns = {'наименование', 'наименование.1'}
-        if not required_columns.issubset(df_svod.columns):
-            raise ValueError(f"Отсутствуют обязательные колонки: {required_columns}")
-
-        if 'считать в плане' not in df_plan.columns:
-            raise ValueError("Отсутствует колонка 'считать в плане'")
-
-        # Подготовка данных
-        df_svod_clean = df_svod[['наименование', 'наименование.1']].copy()
-        df_svod_clean.columns = ['дисциплина', 'кафедра']
-        df_svod_clean = df_svod_clean.dropna(subset=['дисциплина'])
-        df_svod_clean['кафедра'] = df_svod_clean['кафедра'].fillna('Не указано')
-
-        df_plan = df_plan[df_plan['считать в плане'] != '-']
-        df_plan = df_plan.rename(columns={'наименование': 'дисциплина'})
-
-        # Объединение данных
-        df_combined = pd.merge(
-            df_svod_clean,
-            df_plan,
-            on='дисциплина',
-            how='inner'
-        ).fillna(0)
-
-        return df_combined
-
-    except Exception as e:
-        raise ValueError(f"Ошибка парсинга Excel: {str(e)}")
-
-
-import os
-import uuid
-from io import BytesIO
-from fastapi import HTTPException, UploadFile
-from sqlalchemy.orm import Session
-from sqlalchemy import func
-import pandas as pd
-import re
-from datetime import datetime
-from app.models import Curriculum, EducationProgram, TaughtDiscipline, Teacher
+from app.models import Curriculum, EducationProgram
 import logging
-from app.models import teacher_program_association
 
 
 logger = logging.getLogger(__name__)
 
-async def import_curriculum(
-    file_bytes: BytesIO,
+def safe_convert(value, convert_func, default):
+    """Безопасное преобразование значений"""
+    try:
+        if pd.isna(value) or str(value).strip() in ('', '-', 'н/д'):
+            return default
+        return convert_func(value)
+    except (ValueError, TypeError) as e:
+        logger.warning(f"Ошибка преобразования значения {value}: {e}")
+        return default
+
+def parse_excel(file_path: str) -> List[Dict]:
+    """
+    Универсальный парсер учебного плана с поддержкой:
+    - переменного количества курсов
+    - автоматическим определением структуры файла
+    - обработкой различных форматов данных
+    """
+    try:
+        print(f"\n{'='*50}\nНачало обработки файла: {file_path}\n{'='*50}")
+
+        # 1. Чтение и анализ структуры файла
+        xls = pd.ExcelFile(file_path)
+        print(f"Листы в файле: {xls.sheet_names}")
+
+        # 2. Определение основных колонок в ПланСвод
+        df_svod = pd.read_excel(xls, sheet_name='ПланСвод', header=None, nrows=5)
+        header_row = None
+        
+        # Поиск строки с заголовками
+        for i in range(3):  # Проверяем первые 3 строки
+            if 'Наименование' in df_svod.iloc[i].values:
+                header_row = i
+                break
+                
+        if header_row is None:
+            raise ValueError("Не найдена строка с заголовками в листе 'ПланСвод'")
+
+        df_svod = pd.read_excel(xls, sheet_name='ПланСвод', header=header_row)
+        print("\nСтруктура листа ПланСвод:")
+        print(df_svod.columns.tolist())
+
+        # Автоматическое определение колонок
+        disc_col = next((col for col in df_svod.columns 
+                       if 'наименование' in str(col).lower()), None)
+        dept_col = next((col for col in df_svod.columns 
+                        if 'кафедра' in str(col).lower()), None)
+
+        if not disc_col:
+            raise ValueError("Не найдена колонка с названиями дисциплин")
+
+        # 3. Анализ листа План
+        df_plan = pd.read_excel(xls, sheet_name='План', header=None, nrows=5)
+        plan_header_row = None
+        
+        for i in range(3):
+            if 'Наименование' in df_plan.iloc[i].values:
+                plan_header_row = i
+                break
+                
+        if plan_header_row is None:
+            raise ValueError("Не найдена строка с заголовками в листе 'План'")
+
+        df_plan = pd.read_excel(xls, sheet_name='План', header=plan_header_row)
+        print("\nСтруктура листа План:")
+        print(df_plan.columns.tolist())
+
+        # 4. Определение структуры курсов
+        course_blocks = {}
+        current_course = None
+        
+        for col in df_plan.columns:
+            col_name = str(col)
+            if 'курс' in col_name.lower():
+                current_course = col_name
+                course_blocks[current_course] = {'start_col': col}
+            elif current_course:
+                if 'семестр' in col_name.lower():
+                    course_blocks[current_course]['semester_col'] = col
+                elif 'лек' in col_name.lower():
+                    course_blocks[current_course]['lecture_col'] = col
+                elif 'пр' in col_name.lower() and 'практ' in col_name.lower():
+                    course_blocks[current_course]['practice_col'] = col
+                elif 'лаб' in col_name.lower():
+                    course_blocks[current_course]['lab_col'] = col
+
+        print("\nОбнаруженные блоки курсов:")
+        for course, blocks in course_blocks.items():
+            print(f"{course}: {blocks}")
+
+        # 5. Обработка данных
+        result = []
+        discipline_col_plan = next((col for col in df_plan.columns 
+                                  if 'наименование' in str(col).lower()), disc_col)
+
+        for idx, row in df_svod.iterrows():
+            if pd.isna(row[disc_col]) or str(row[disc_col]).strip() in ['', 'nan']:
+                continue
+
+            discipline = str(row[disc_col]).strip()
+            department = str(row[dept_col]).strip() if dept_col and pd.notna(row.get(dept_col)) else "Не указано"
+
+            # Поиск дисциплины в листе План
+            hours_data = None
+            if discipline_col_plan in df_plan.columns:
+                mask = df_plan[discipline_col_plan].astype(str).str.strip() == discipline
+                if mask.any():
+                    hours_data = df_plan[mask].iloc[0]
+
+            # Сбор часов по всем курсам
+            lecture_hours = 0.0
+            practice_hours = 0.0
+            lab_hours = 0.0
+
+            for course, blocks in course_blocks.items():
+                try:
+                    if 'lecture_col' in blocks:
+                        val = hours_data[blocks['lecture_col']] if hours_data is not None else 0
+                        lecture_hours += float(val) if pd.notna(val) else 0
+                    
+                    if 'practice_col' in blocks:
+                        val = hours_data[blocks['practice_col']] if hours_data is not None else 0
+                        practice_hours += float(val) if pd.notna(val) else 0
+                    
+                    if 'lab_col' in blocks:
+                        val = hours_data[blocks['lab_col']] if hours_data is not None else 0
+                        lab_hours += float(val) if pd.notna(val) else 0
+                except (ValueError, TypeError):
+                    continue
+
+            item = {
+                'discipline': discipline,
+                'department': department,
+                'lecture_hours': lecture_hours,
+                'practice_hours': practice_hours,
+                'lab_hours': lab_hours,
+                'exam_hours': 0.0,
+                'test_hours': 0.0,
+                'total_practice_hours': practice_hours + lab_hours
+            }
+
+            print(f"\nДисциплина: {discipline}")
+            print(f"Кафедра: {department}")
+            print(f"Часы: лекции={lecture_hours}, практики={practice_hours}, лабы={lab_hours}")
+
+            result.append(item)
+
+        if not result:
+            raise ValueError("Файл не содержит данных для импорта")
+
+        print(f"\n{'='*50}\nУспешно обработано дисциплин: {len(result)}")
+        print(f"{'='*50}\n")
+
+        return result
+
+    except Exception as e:
+        print(f"\n{'!'*50}\nОшибка при обработке файла: {str(e)}\n{'!'*50}")
+        logger.error(f"Ошибка парсинга Excel: {str(e)}", exc_info=True)
+        raise ValueError(f"Ошибка чтения файла: {str(e)}")
+        
+
+def import_curriculum(
+    file_path: str,
     filename: str,
     db: Session,
     background_tasks: BackgroundTasks
 ):
-    """Функция импорта с правильной привязкой преподавателей к дисциплинам"""
+    """
+    Улучшенная функция импорта учебного плана.
+    Включает расширенную диагностику и обработку ошибок.
+    """
     try:
-        # 1. Парсинг Excel
+        # Проверка файла
+        if not os.path.exists(file_path):
+            raise HTTPException(status_code=400, detail="Файл не найден")
+        
+        if not filename.lower().endswith(('.xlsx', '.xls')):
+            raise HTTPException(status_code=400, detail="Поддерживаются только файлы Excel (.xlsx, .xls)")
+
+        # Диагностика перед парсингом
         try:
-            df_combined = await parse_excel_file_from_bytes(file_bytes)
+            # Пробуем прочитать файл для диагностики
+            diagnostic_df = pd.read_excel(file_path, sheet_name=None, nrows=1)
+            print("Диагностика файла:")
+            for sheet_name, df in diagnostic_df.items():
+                print(f"Лист '{sheet_name}': колонки - {df.columns.tolist()}")
+        except Exception as e:
+            logger.warning(f"Диагностика файла не удалась: {str(e)}")
+
+        # Парсинг данных
+        try:
+            curriculum_data = parse_excel(file_path)
         except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "message": str(e),
+                    "advice": "Проверьте, что файл содержит листы 'ПланСвод' и 'План' с корректными колонками"
+                }
+            )
 
-        # 2. Определение программы
-        filename_base = os.path.splitext(filename)[0]
-        program_code = filename_base.split('_')[0]
-        
-        program = db.query(EducationProgram)\
-            .filter(EducationProgram.short_name.ilike(f"{program_code}%"))\
-            .first()
+        if not curriculum_data:
+            raise HTTPException(
+                status_code=400,
+                detail="Файл не содержит данных для импорта. Проверьте формат файла."
+            )
 
-        if not program:
-            raise HTTPException(400, detail=f"Программа с кодом {program_code} не найдена")
-
-        # 3. Импорт данных
-        imported_count = 0
-        linked_teachers = 0
-        
-        # Очищаем старые дисциплины программы
-        db.query(Curriculum).filter(Curriculum.program_id == program.program_id).delete()
-        db.commit()
-
-        for _, row in df_combined.iterrows():
-            try:
-                discipline_name = str(row['дисциплина']).strip()
-                department = str(row.get('кафедра', 'Не указано')).strip()
-                
-                if not discipline_name or "дисциплины по выбору" in discipline_name.lower():
-                    continue
-
-                # Создаем дисциплину
-                discipline = Curriculum(
-                    discipline=discipline_name,
-                    department=department,
-                    semester=safe_convert(row.get('семестр'), int, None),
-                    lecture_hours=safe_convert(row.get('лекции'), float, 0),
-                    practice_hours=safe_convert(row.get('практики'), float, 0),
-                    exam_hours=safe_convert(row.get('экзамен'), float, 0),
-                    test_hours=safe_convert(row.get('зачет'), float, 0),
-                    course_project_hours=safe_convert(row.get('курсовые'), float, 0),
-                    total_practice_hours=safe_convert(row.get('практика'), float, 0),
-                    final_work_hours=safe_convert(row.get('вкр'), int, 0),
-                    program_id=program.program_id
+        # Определение программы
+        try:
+            program_code = filename.split('_')[0]
+            program = db.query(EducationProgram).filter(
+                EducationProgram.short_name.ilike(f"{program_code}%")
+            ).first()
+            
+            if not program:
+                available_programs = db.query(EducationProgram.short_name).all()
+                raise HTTPException(
+                    status_code=404,
+                    detail={
+                        "message": f"Программа с кодом {program_code} не найдена",
+                        "available_programs": [p[0] for p in available_programs if p[0]],
+                        "filename_pattern": "Ожидается формат: КОД_ПРОФИЛЬ_ИНСТИТУТ_ГОД.xlsx"
+                    }
                 )
-                db.add(discipline)
-                db.flush()
-                imported_count += 1
+        except IndexError:
+            raise HTTPException(
+                status_code=400,
+                detail="Некорректное имя файла. Ожидается формат: КОД_ПРОФИЛЬ_ИНСТИТУТ_ГОД.xlsx"
+            )
 
-                # Ищем преподавателей, которые уже ведут эту дисциплину по названию
-                existing_links = db.query(TaughtDiscipline)\
-                    .join(Curriculum)\
-                    .join(Teacher)\
-                    .filter(
-                        Curriculum.discipline.ilike(f"%{discipline_name}%"),
-                        Teacher.programs.any(program_id=program.program_id)
-                    )\
-                    .all()
+        # Очистка старых данных
+        deleted_count = db.query(Curriculum).filter(
+            Curriculum.program_id == program.program_id
+        ).delete(synchronize_session=False)
+        logger.info(f"Удалено {deleted_count} старых записей учебного плана")
 
-                # Привязываем только соответствующих преподавателей
-                for link in existing_links:
-                    if not db.query(TaughtDiscipline)\
-                        .filter_by(
-                            teacher_id=link.teacher_id,
-                            curriculum_id=discipline.curriculum_id
-                        )\
-                        .first():
-                        
-                        db.add(TaughtDiscipline(
-                            teacher_id=link.teacher_id,
-                            curriculum_id=discipline.curriculum_id
-                        ))
-                        linked_teachers += 1
+        # Подготовка данных
+        for item in curriculum_data:
+            item['program_id'] = program.program_id
+            item['semester'] = item.get('semester')
+            
+            # Приведение типов
+            for field in ['lecture_hours', 'practice_hours', 'lab_hours', 'exam_hours', 'test_hours']:
+                item[field] = float(item.get(field, 0))
 
-            except Exception as e:
-                logger.error(f"Ошибка обработки строки {discipline_name}: {str(e)}")
-                continue
+        # Вставка данных
+        try:
+            db.bulk_insert_mappings(Curriculum, curriculum_data)
+            db.commit()
+            logger.info(f"Успешно импортировано {len(curriculum_data)} дисциплин")
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Ошибка при вставке данных: {str(e)}", exc_info=True)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Ошибка базы данных при импорте: {str(e)}"
+            )
 
-        db.commit()
+        # Очистка
+        background_tasks.add_task(
+            lambda: os.remove(file_path) if os.path.exists(file_path) else None
+        )
 
         return {
             "status": "success",
-            "message": "Учебный план успешно импортирован",
+            "imported_count": len(curriculum_data),
+            "program_id": program.program_id,
+            "program_name": program.program_name,
             "details": {
-                "imported_disciplines": imported_count,
-                "linked_teachers": linked_teachers,
-                "program_id": program.program_id,
-                "program_name": program.program_name,
-                "file": filename
+                "disciplines": [d['discipline'] for d in curriculum_data[:3]] + ["..."],
+                "departments": list(set(d['department'] for d in curriculum_data))
             }
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
-        db.rollback()
-        logger.error(f"Ошибка импорта: {str(e)}", exc_info=True)
-        raise HTTPException(500, detail=f"Ошибка импорта: {str(e)}")
+        logger.error(f"Критическая ошибка импорта: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Внутренняя ошибка сервера: {str(e)}"
+        )
 
 
-async def parse_excel_file_from_bytes(file_bytes: BytesIO):
+def parse_excel_file_from_bytes(file_bytes: BytesIO):
     """Парсинг Excel из BytesIO"""
     try:
         # Пытаемся определить формат файла
@@ -760,12 +734,15 @@ async def parse_excel_file_from_bytes(file_bytes: BytesIO):
 
 
 def safe_convert(value, convert_func, default):
-    """Безопасное преобразование значений"""
     try:
-        if pd.isna(value) or str(value).strip() == '':
+        # Проверка на строку 'nan'
+        if str(value).strip().lower() == 'nan':
+            return default
+        if pd.isna(value) or str(value).strip() in ('', '-', 'н/д'):
             return default
         return convert_func(value)
-    except (ValueError, TypeError):
+    except (ValueError, TypeError) as e:
+        logger.warning(f"Ошибка преобразования значения {value}: {e}")
         return default
 
 

@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Просмотр учебного плана</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
+    <style>
+        .curriculum-container { max-width: 1200px; margin: 20px auto; padding: 20px; }
+        .program-select { max-width: 600px; margin-bottom: 30px; }
+        .table-responsive { margin-top: 20px; }
+        .loading-spinner { display: none; margin: 20px 0; }
+        .error-message { color: red; margin-top: 10px; }
+    </style>
+</head>
+<body>
+    <div class="container curriculum-container">
+        <div class="row">
+            <div class="col-12">
+                <h2 class="mb-4"><i class="bi bi-journal-bookmark"></i> Просмотр учебного плана</h2>
+                
+                <div class="program-select">
+                    <label for="programSelect" class="form-label">Выберите образовательную программу:</label>
+                    <select class="form-select" id="programSelect">
+                        <option selected disabled value="">Загрузка программ...</option>
+                    </select>
+                    <div id="programError" class="error-message"></div>
+                </div>
+                
+                <div id="loadingSpinner" class="text-center loading-spinner">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Загрузка...</span>
+                    </div>
+                    <p class="mt-2">Загрузка данных...</p>
+                </div>
+                
+                <div id="programInfo" class="mb-4" style="display: none;">
+                    <h4 id="programTitle"></h4>
+                    <p id="programDetails" class="text-muted"></p>
+                </div>
+                
+                <div class="table-responsive">
+                    <table class="table table-striped table-hover" id="curriculumTable">
+                        <thead class="table-dark">
+                            <tr>
+                                <th>Дисциплина</th>
+                                <th>Кафедра</th>
+                                <th>Семестр</th>
+                                <th>Лекции</th>
+                                <th>Практики</th>
+                                <th>Экзамен</th>
+                                <th>Зачет</th>
+                                <th>Преподаватели</th>
+                            </tr>
+                        </thead>
+                        <tbody id="curriculumBody"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const elements = {
+                select: document.getElementById('programSelect'),
+                body: document.getElementById('curriculumBody'),
+                spinner: document.getElementById('loadingSpinner'),
+                info: document.getElementById('programInfo'),
+                title: document.getElementById('programTitle'),
+                details: document.getElementById('programDetails'),
+                error: document.getElementById('programError')
+            };
+
+            // Загрузка списка программ
+            loadPrograms();
+
+            // Обработчик выбора программы
+            elements.select.addEventListener('change', function() {
+                const programId = this.value;
+                if (!programId) return;
+                
+                showLoading();
+                clearTable();
+                hideInfo();
+                
+                loadCurriculum(programId);
+            });
+
+            async function loadPrograms() {
+                try {
+                    const response = await fetch('/curriculum/programs');
+                    
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    
+                    const programs = await response.json();
+                    
+                    if (!programs || programs.length === 0) {
+                        elements.select.innerHTML = '<option selected disabled value="">Программы не найдены</option>';
+                        elements.error.textContent = 'В системе нет образовательных программ';
+                        return;
+                    }
+                    
+                    elements.select.innerHTML = '<option selected disabled value="">Выберите программу</option>';
+                    programs.forEach(program => {
+                        const option = document.createElement('option');
+                        option.value = program.program_id;
+                        option.textContent = `${program.program_name} (${program.short_name || 'без кода'})`;
+                        elements.select.appendChild(option);
+                    });
+                    
+                } catch (error) {
+                    console.error('Ошибка загрузки программ:', error);
+                    elements.select.innerHTML = '<option selected disabled value="">Ошибка загрузки</option>';
+                    elements.error.textContent = 'Не удалось загрузить список программ';
+                }
+            }
+
+            async function loadCurriculum(programId) {
+                try {
+                    const response = await fetch(`/curriculum/program/${programId}`);
+                    
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    
+                    const curriculum = await response.json();
+                    
+                    if (!curriculum || curriculum.length === 0) {
+                        showError('Для выбранной программы нет учебного плана');
+                        return;
+                    }
+                    
+                    showProgramInfo(programId, curriculum.length);
+                    renderCurriculumTable(curriculum);
+                    
+                } catch (error) {
+                    console.error('Ошибка загрузки учебного плана:', error);
+                    showError('Не удалось загрузить учебный план');
+                } finally {
+                    hideLoading();
+                }
+            }
+
+            function renderCurriculumTable(curriculum) {
+                elements.body.innerHTML = '';
+                
+                curriculum.forEach(item => {
+                    const row = document.createElement('tr');
+                    row.innerHTML = `
+                        <td>${item.discipline || '-'}</td>
+                        <td>${item.department || 'Не указано'}</td>
+                        <td>${item.semester || '-'}</td>
+                        <td>${item.lecture_hours || '0'}</td>
+                        <td>${item.practice_hours || '0'}</td>
+                        <td>${item.exam_hours ? 'Да' : 'Нет'}</td>
+                        <td>${item.test_hours ? 'Да' : 'Нет'}</td>
+                        <td>${item.teachers?.map(t => t.full_name).join(', ') || 'Не назначены'}</td>
+                    `;
+                    elements.body.appendChild(row);
+                });
+            }
+
+            function showProgramInfo(programId, count) {
+                const selectedOption = elements.select.querySelector(`option[value="${programId}"]`);
+                elements.title.textContent = selectedOption.textContent;
+                elements.details.textContent = `Всего дисциплин: ${count}`;
+                elements.info.style.display = 'block';
+            }
+
+            function showLoading() {
+                elements.spinner.style.display = 'block';
+                elements.error.textContent = '';
+            }
+
+            function hideLoading() {
+                elements.spinner.style.display = 'none';
+            }
+
+            function showError(message) {
+                elements.error.textContent = message;
+            }
+
+            function clearTable() {
+                elements.body.innerHTML = '';
+            }
+
+            function hideInfo() {
+                elements.info.style.display = 'none';
+            }
+        });
+    </script>
+</body>
+</html>

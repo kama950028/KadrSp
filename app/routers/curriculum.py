@@ -7,11 +7,17 @@ from app.schemas import CurriculumBase, EducationProgramBase
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import selectinload
+from fastapi.responses import FileResponse
+import logging
+from pathlib import Path
+import os
+
 
 
 templates = Jinja2Templates(directory="app/templates")
 
 router = APIRouter(prefix="/curriculum", tags=["curriculum"])
+
 
 @router.get("/view", response_class=HTMLResponse)
 def curriculum_view(request: Request):
@@ -210,3 +216,55 @@ def debug_teachers(db: Session = Depends(get_db)):
 #                 print("  No teachers attribute!")
     
 #     return programs
+
+logger = logging.getLogger(__name__)
+BASE_DIR = Path(__file__).resolve().parent
+TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
+@router.get("/curriculum/up")
+async def get_curriculum_page():
+    """Отдает HTML страницу просмотра учебного плана"""
+    file_path = os.path.join(TEMPLATES_DIR, "curriculum_up.html")
+    
+    if not os.path.exists(file_path):
+        raise HTTPException(
+            status_code=404,
+            detail=f"File not found. Searched at: {file_path}"
+        )
+    
+    return FileResponse(file_path)
+
+@router.get("/programs", response_model=List[EducationProgramBase])
+async def get_all_programs(db: Session = Depends(get_db)):
+    """Получение списка всех образовательных программ"""
+    try:
+        programs = db.query(EducationProgram).order_by(EducationProgram.program_name).all()
+        logger.info(f"Found {len(programs)} programs")
+        if not programs:
+            logger.warning("No programs found in database")
+        return programs
+    except Exception as e:
+        logger.error(f"Error fetching programs: {str(e)}")
+        raise HTTPException(500, detail="Internal server error")
+
+@router.get("/program/{program_id}", response_model=List[CurriculumBase])
+async def get_curriculum_by_program(
+    program_id: int,
+    db: Session = Depends(get_db)
+):
+    """Получение учебного плана по ID программы"""
+    try:
+        curriculum = db.query(Curriculum)\
+            .options(joinedload(Curriculum.teachers))\
+            .filter(Curriculum.program_id == program_id)\
+            .order_by(Curriculum.semester, Curriculum.discipline)\
+            .all()
+        
+        if not curriculum:
+            logger.warning(f"No curriculum found for program_id: {program_id}")
+            raise HTTPException(404, detail="Учебный план не найден")
+        
+        logger.info(f"Found {len(curriculum)} disciplines for program {program_id}")
+        return curriculum
+    except Exception as e:
+        logger.error(f"Error fetching curriculum: {str(e)}")
+        raise HTTPException(500, detail="Internal server error")

@@ -38,8 +38,8 @@ class Teacher(Base):
     retrainings = relationship("Retraining", back_populates="teacher", cascade="all, delete", lazy="selectin")
     # disciplines = relationship("TaughtDiscipline", back_populates="teacher", cascade="all, delete", lazy="selectin")
     # Связь с дисциплинами через таблицу TaughtDiscipline
-    taught_disciplines = relationship("TaughtDiscipline", back_populates="teacher")
-    disciplines = relationship("Curriculum", secondary="taught_disciplines", back_populates="teachers", lazy="joined")
+    taught_disciplines = relationship("TaughtDiscipline", back_populates="teacher", overlaps="curriculum")
+    disciplines = relationship("Curriculum", secondary="taught_disciplines", back_populates="teachers", lazy="joined", overlaps="taught_disciplines")
     programs = relationship("EducationProgram", secondary=teacher_program_association, back_populates="teachers")
 
 # Таблица квалификаций преподавателей
@@ -96,8 +96,8 @@ class TaughtDiscipline(Base):
     teacher_id = Column(Integer, ForeignKey("teachers.teacher_id", ondelete="CASCADE"), nullable=False)
     curriculum_id = Column(Integer, ForeignKey("curriculum.curriculum_id", ondelete="CASCADE"), nullable=False)
 
-    teacher = relationship("Teacher", back_populates="taught_disciplines")
-    curriculum = relationship("Curriculum", back_populates="taught_disciplines")
+    teacher = relationship("Teacher", back_populates="taught_disciplines", overlaps="disciplines")
+    curriculum = relationship("Curriculum", back_populates="taught_disciplines", overlaps="teacher")
 
 # Таблица учебных планов
 class Curriculum(Base):
@@ -109,6 +109,7 @@ class Curriculum(Base):
     semester = Column(Integer, nullable=True)  # Семестр, в котором преподается дисциплина
     lecture_hours = Column(Float, default=0.0)  # Количество часов лекций
     practice_hours = Column(Float, default=0.0)  # Количество часов практических занятий
+    lab_hours = Column(Float, default=0.0)
     exam_hours = Column(Float, default=0.0)  # Количество часов экзамена
     test_hours = Column(Float, default=0.0)  # Количество часов зачета
     course_project_hours = Column(Float, default=0.0)  # Количество часов на курсовой проект
@@ -119,8 +120,8 @@ class Curriculum(Base):
     program = relationship("EducationProgram", back_populates="curriculum")  # Связь с образовательной программой
     
     # Добавляем связь с преподавателями через таблицу TaughtDiscipline
-    teachers = relationship("Teacher", secondary="taught_disciplines", back_populates="disciplines", lazy="selectin")
-    taught_disciplines = relationship("TaughtDiscipline", back_populates="curriculum")
+    teachers = relationship("Teacher", secondary="taught_disciplines", back_populates="disciplines", lazy="selectin", overlaps="taught_disciplines")
+    taught_disciplines = relationship("TaughtDiscipline", back_populates="curriculum", overlaps="teachers")
     
     @property
     def program_short_name(self):

@@ -36,46 +36,25 @@ async def upload_curriculum_endpoint(
     file: UploadFile = File(...),
     db: Session = Depends(get_db)
 ):
-    """Улучшенный эндпоинт для загрузки учебных планов"""
     try:
-        # Проверка расширения файла
-        if not file.filename.lower().endswith(('.xlsx', '.xls')):
-            raise HTTPException(400, "Поддерживаются только файлы Excel (.xlsx, .xls)")
-
-        # Читаем содержимое файла в память
-        file_content = await file.read()
-        if not file_content:
-            raise HTTPException(400, "Файл пустой")
-
-        # Создаем временный файл для резервного копирования
-        temp_dir = "temp_uploads"
-        os.makedirs(temp_dir, exist_ok=True)
-        temp_path = f"{temp_dir}/{uuid.uuid4()}_{file.filename}"
-        
+        # Сохранение файла
+        temp_path = f"temp_{uuid.uuid4()}.xlsx"
         with open(temp_path, "wb") as buffer:
-            buffer.write(file_content)
+            content = await file.read()
+            buffer.write(content)
 
-        # Создаем BytesIO объект для работы с файлом в памяти
-        file_bytes = BytesIO(file_content)
-        file_bytes.seek(0)  # Важно: переводим указатель в начало
-
-        # Вызываем функцию импорта
-        result = await import_curriculum(
-            file_bytes=file_bytes,
+        # Синхронный вызов импорта
+        result = import_curriculum(
+            file_path=temp_path,
             filename=file.filename,
             db=db,
             background_tasks=background_tasks
         )
 
         return JSONResponse(content=result, status_code=200)
-
-    except HTTPException as he:
-        raise he
+    
     except Exception as e:
-        raise HTTPException(500, f"Ошибка обработки файла: {str(e)}")
-    finally:
-        if os.path.exists(temp_path):
-            background_tasks.add_task(lambda: os.remove(temp_path))
+        raise HTTPException(500, detail=str(e))
 
 
 # @router.post("/upload-curriculum")
