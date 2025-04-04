@@ -6,7 +6,7 @@ from app.database import get_db
 from app.schemas import CurriculumBase, EducationProgramBase
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy.orm import selectinload, joinedload
+from sqlalchemy.orm import selectinload
 from fastapi.responses import FileResponse
 import logging
 from pathlib import Path
@@ -248,10 +248,7 @@ async def get_all_programs(db: Session = Depends(get_db)):
     """Получение списка всех образовательных программ"""
     try:
         programs = (
-            db.query(EducationProgram)
-            .join(EducationProgram.teachers)
-            .order_by(EducationProgram.program_name)
-            .all()
+            db.query(EducationProgram).order_by(EducationProgram.program_name).all()
         )
         logger.info(f"Found {len(programs)} programs")
         if not programs:
@@ -269,7 +266,6 @@ async def get_curriculum_by_program(program_id: int, db: Session = Depends(get_d
         curriculum = (
             db.query(Curriculum)
             .options(joinedload(Curriculum.teachers))
-            .filter(Curriculum.program_id == program_id)
             .order_by(Curriculum.semester, Curriculum.discipline)
             .all()
         )

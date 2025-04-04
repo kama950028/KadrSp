@@ -7,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, HTMLResponse
 from pathlib import Path
 
-
+ 
 
 # Создаем таблицы в БД (в реальном проекте используйте миграции!)
 Base.metadata.create_all(bind=engine)

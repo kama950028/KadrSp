@@ -1,8 +1,14 @@
 from typing import List
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from app.models import Teacher, Qualification, Curriculum
-from app.services.import_utils import parse_excel, import_curriculum, assign_teacher_to_program, import_teachers_with_programs, parse_docx
+from app.services.import_utils import (
+    parse_excel,
+    import_curriculum,
+    assign_teacher_to_program,
+    import_teachers_with_programs,
+    parse_docx,
+)
 from app.schemas import TeacherCreate, TeacherResponse
 from app.database import get_db
 
@@ -12,25 +18,28 @@ import os, docx
 
 router = APIRouter(prefix="/api", tags=["teachers"])
 
+
 @router.post("/", response_model=TeacherResponse)
 def create_teacher(teacher: TeacherCreate, db: Session = Depends(get_db)):
     # Проверка на уникальность ФИО
-    db_teacher = db.query(Teacher).filter(Teacher.full_name == teacher.full_name).first()
+    db_teacher = (
+        db.query(Teacher).filter(Teacher.full_name == teacher.full_name).first()
+    )
     if db_teacher:
         raise HTTPException(status_code=400, detail="Преподаватель уже существует")
-    
+
     # Создаем преподавателя
     new_teacher = Teacher(
         full_name=teacher.full_name,
         position=teacher.position,
-        education_level=teacher.education_level
+        education_level=teacher.education_level,
     )
-    
+
     # Добавляем квалификации
     for qual in teacher.qualifications:
         qualification = Qualification(**qual.dict())
         new_teacher.qualifications.append(qualification)
-    
+
     db.add(new_teacher)
     db.commit()
     db.refresh(new_teacher)
@@ -51,13 +60,14 @@ def get_teachers(db: Session = Depends(get_db)):
             "education_level": teacher.education_level,
             "academic_degree": teacher.academic_degree,
             "academic_title": teacher.academic_title,
-            "disciplines_raw": ", ".join([d.discipline for d in teacher.disciplines]),  # Исправлено
-            "qualifications_raw": ", ".join([q.program_name for q in teacher.qualifications]),
+            "disciplines_raw": ", ".join(
+                [d.discipline for d in teacher.disciplines]
+            ),  # Исправлено
+            "qualifications_raw": ", ".join(
+                [q.program_name for q in teacher.qualifications]
+            ),
             "programs": [
-                {
-                    "program_id": p.program_id,
-                    "program_name": p.program_name
-                }
+                {"program_id": p.program_id, "program_name": p.program_name}
                 for p in teacher.programs
             ],  # Добавлено program_id
         }
@@ -74,20 +84,24 @@ def get_teacher(teacher_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/teachers/{teacher_id}/assign-program/{program_id}")
-def assign_program_to_teacher(teacher_id: int, program_id: int, db: Session = Depends(get_db)):
+def assign_program_to_teacher(
+    teacher_id: int, program_id: int, db: Session = Depends(get_db)
+):
     """
     Привязывает преподавателя к образовательной программе.
     """
     try:
         assign_teacher_to_program(db, teacher_id, program_id)
-        return {"message": f"Преподаватель с ID {teacher_id} привязан к программе с ID {program_id}"}
+        return {
+            "message": f"Преподаватель с ID {teacher_id} привязан к программе с ID {program_id}"
+        }
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/teachers/import")
 
+@router.post("/teachers/import")
 def import_teachers(file: UploadFile = File(...), db: Session = Depends(get_db)):
     """
     Импортирует преподавателей из загруженного файла и привязывает их к образовательным программам.
@@ -105,13 +119,10 @@ def import_teachers(file: UploadFile = File(...), db: Session = Depends(get_db))
         teachers_data = parse_docx(temp_file)  # Функция для парсинга docx
         import_teachers_with_programs(db, teachers_data)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Ошибка импорта преподавателей: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Ошибка импорта преподавателей: {str(e)}"
+        )
     finally:
         os.remove(temp_file)
 
     return {"message": "Преподаватели успешно импортированы"}
-
-
-
-
-
