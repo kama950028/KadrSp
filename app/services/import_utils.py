@@ -13,7 +13,16 @@ import pandas as pd
 from sqlalchemy.dialects.postgresql import insert
 from io import BytesIO
 import traceback
-
+from fastapi import HTTPException, UploadFile, BackgroundTasks
+from sqlalchemy.orm import Session
+from sqlalchemy import func, and_
+import pandas as pd
+import re
+import os
+from datetime import datetime
+from typing import List, Dict
+from app.models import Curriculum, EducationProgram
+import logging
 
 def parse_docx(file_path: str):
     doc = Document(file_path)
@@ -187,90 +196,8 @@ def import_teachers_with_programs(db: Session, teachers_data: list):
         db.commit()
 
 
-# def import_teachers_with_programs(db: Session, teachers_data: list):
-#     """
-#     Импортирует преподавателей и привязывает их к образовательным программам.
-#     """
-#     for entry in teachers_data:
-#         # Проверяем, существует ли преподаватель
-#         teacher = db.query(Teacher).filter_by(full_name=entry["full_name"]).first()
-#         if not teacher:
-#             # Создаем нового преподавателя
-#             teacher = Teacher(
-#                 full_name=entry["full_name"],
-#                 position=entry["position"],
-#                 education_level=entry["education_level"],
-#                 total_experience=entry.get("total_experience", 0),
-#                 teaching_experience=entry.get("teaching_experience", 0),
-#                 professional_experience=entry.get("professional_experience", 0),
-#                 academic_degree=entry.get("academic_degree"),
-#                 academic_title=entry.get("academic_title")
-#             )
-#             db.add(teacher)
-#             db.commit()
-#             db.refresh(teacher)
-
-#         # Обработка образовательных программ
-#         programs_raw = entry.get("programs_raw", "")
-#         programs = [p.strip() for p in programs_raw.split(";") if p.strip()]  # Разделяем и очищаем программы
-
-#         for program_name in programs:
-#             # Проверяем, существует ли программа
-#             program = db.query(EducationProgram).filter_by(program_name=program_name).first()
-#             if not program:
-#                 # Генерация уникального short_name
-#                 base_short_name = program_name[:10].strip()  # Берем первые 10 символов
-#                 short_name = base_short_name
-#                 counter = 1
-
-#                 # Проверяем уникальность short_name
-#                 while db.query(EducationProgram).filter_by(short_name=short_name).first():
-#                     short_name = f"{base_short_name}_{counter}"
-#                     counter += 1
-
-#                 # Создаем новую программу
-#                 program = EducationProgram(program_name=program_name, short_name=short_name, year=2023)
-#                 db.add(program)
-#                 db.commit()
-#                 db.refresh(program)
-
-#             # Привязываем преподавателя к программе
-#             if program not in teacher.programs:
-#                 teacher.programs.append(program)
-
-#         db.commit()
 
 
-# def determine_program_type(file_name: str) -> str:
-#     """
-#     Определяет тип программы (бакалавриат или магистратура) на основе названия файла.
-#     Формат названия файла: КодНаправленияПодготовки_АббревиатураПрофиля_Институт_ГодПоступления
-#     Пример: 09.04.04_АИС_ИИТ_2024
-#     """
-#     try:
-#         # Извлекаем код направления подготовки из названия файла
-#         code = file_name.split("_")[0]
-#         if code.startswith("09.03"):
-#             return "Бакалавриат"
-#         elif code.startswith("09.04"):
-#             return "Магистратура"
-#         else:
-#             return "Неизвестный тип программы"
-#     except IndexError:
-#         return "Ошибка в формате названия файла"
-
-
-def parse_semester(semester_str):
-    """Извлекает номера семестров из строки."""
-    if pd.isna(semester_str) or not semester_str:
-        return []
-    semesters = []
-    for part in str(semester_str).split(";"):
-        try:
-            semesters.append(int(float(part.strip())))
-        except ValueError:
-            continue
-    return semesters
 
 
 def assign_teacher_to_program(db: Session, teacher_id: int, program_id: int):
@@ -302,148 +229,8 @@ def assign_teacher_to_program(db: Session, teacher_id: int, program_id: int):
         )
 
 
-# def import_curriculum(db: Session, curriculum_data: list):
-# try:
-#     # Проверка данных
-#     invalid = [d for d in curriculum_data if not isinstance(d.get('discipline'), str)]
-#     if invalid:
-#         raise ValueError(f"Найдено {len(invalid)} некорректных записей")
-
-#     # Очистка таблицы
-#     db.execute(delete(Curriculum))
-
-#     # Связывание дисциплин с образовательными программами
-#     for entry in curriculum_data:
-#         program_short_name = entry.get('program_short_name')
-#         if program_short_name:
-#             program = db.query(EducationProgram).filter_by(short_name=program_short_name).first()
-#             if program:
-#                 entry['program_id'] = program.program_id
-#             else:
-#                 print(f"Программа с short_name '{program_short_name}' не найдена")
-
-#     # Пакетная вставка
-#     db.bulk_insert_mappings(Curriculum, curriculum_data)
-#     db.commit()
-
-#     print(f"Импортировано {len(curriculum_data)} записей")
-#     return True
-
-# except Exception as e:
-#     db.rollback()
-#     raise e
-
-# def import_curriculum(db: Session, curriculum_data: list):
-#     """
-#     Импортирует учебные планы и связывает их с выбранной образовательной программой.
-#     """
-#     try:
-#         # Получаем список доступных образовательных программ
-#         programs = db.query(EducationProgram).all()
-#         if not programs:
-#             raise ValueError("Нет доступных образовательных программ. Сначала создайте их.")
-
-#         # Выводим список программ для выбора
-#         print("Доступные образовательные программы:")
-#         for i, program in enumerate(programs, start=1):
-#             print(f"{i}. {program.program_name} (short_name: {program.short_name}, year: {program.year})")
-
-#         # Запрашиваем выбор пользователя
-#         selected_index = int(input("Введите номер образовательной программы: ")) - 1
-#         if selected_index < 0 or selected_index >= len(programs):
-#             raise ValueError("Неверный выбор программы.")
-
-#         selected_program = programs[selected_index]
-#         print(f"Вы выбрали программу: {selected_program.program_name} (ID: {selected_program.program_id})")
-
-#         # Добавляем program_id ко всем записям учебного плана
-#         for entry in curriculum_data:
-#             entry['program_id'] = selected_program.program_id
-
-#         # Проверка данных
-#         invalid = [d for d in curriculum_data if not isinstance(d.get('discipline'), str)]
-#         if invalid:
-#             raise ValueError(f"Найдено {len(invalid)} некорректных записей")
-
-#         # Очистка таблицы (если требуется)
-#         db.execute(delete(Curriculum))
-
-#         # Пакетная вставка
-#         db.bulk_insert_mappings(Curriculum, curriculum_data)
-#         db.commit()
-
-#         print(f"Импортировано {len(curriculum_data)} записей для программы '{selected_program.program_name}'")
-#         return True
-
-#     except Exception as e:
-#         db.rollback()
-#         raise RuntimeError(f"Ошибка импорта учебных планов: {e}")
 
 
-# def parse_excel(file_path: str) -> list:
-#     try:
-#         df_svod = pd.read_excel(file_path, sheet_name='ПланСвод', header=2)
-#         df_plan = pd.read_excel(file_path, sheet_name='План', header=2)
-
-#         # Приведение названий столбцов
-#         df_svod.columns = df_svod.columns.str.strip().str.lower()
-#         df_plan.columns = df_plan.columns.str.strip().str.lower()
-
-#         # Обязательные проверки
-#         required_columns = {'наименование', 'наименование.1'}
-#         if not required_columns.issubset(df_svod.columns):
-#             raise ValueError("Отсутствуют обязательные колонки в листе ПланСвод")
-
-#         # Основная обработка
-#         df_combined = pd.merge(
-#             df_svod[['наименование', 'наименование.1']].rename(columns={'наименование': 'дисциплина', 'наименование.1': 'кафедра'}),
-#             df_plan,
-#             on='дисциплина',
-#             how='inner'
-#         ).fillna(0)
-
-#         # Отладочный вывод первых 3 строк
-#         print("Первые 3 строки данных:")
-#         print(df_combined.head(3).to_string())
-
-#         curriculum_data = []
-#         for _, row in df_combined.iterrows():
-#             try:
-#                 entry = {
-#                     'discipline': str(row['дисциплина']).strip(),
-#                     'department': str(row['кафедра']).strip(),
-#                     'semester': safe_convert(row.get('семестр'), int, None),
-#                     'lecture_hours': safe_convert(row.get('лекции', 0), float, 0),
-#                     'practice_hours': safe_convert(row.get('практики', 0), float, 0),
-#                     'exam_hours': safe_convert(row.get('экзамен', 0), float, 0),
-#                     'test_hours': safe_convert(row.get('зачет', 0), float, 0),
-#                     'course_project_hours': safe_convert(row.get('курсовые', 0), float, 0),
-#                     'total_practice_hours': safe_convert(row.get('практика', 0), float, 0),
-#                     'final_work_hours': safe_convert(row.get('вкр', 0), int, 0)
-#                 }
-#                 curriculum_data.append(entry)
-#             except Exception as e:
-#                 print(f"Ошибка обработки строки: {e}")
-#                 continue
-
-#         return curriculum_data
-
-#     except Exception as e:
-#         print(f"Ошибка парсинга Excel: {e}")
-#         raise
-
-
-# import_utils.py
-from fastapi import HTTPException, UploadFile, BackgroundTasks
-from sqlalchemy.orm import Session
-from sqlalchemy import func, and_
-import pandas as pd
-import re
-import os
-from datetime import datetime
-from typing import List, Dict
-from app.models import Curriculum, EducationProgram
-import logging
 
 
 logger = logging.getLogger(__name__)
@@ -462,6 +249,34 @@ def safe_convert(value, convert_func, default):
 
 from collections import defaultdict
 
+
+def parse_semester(exam_value, test_value):
+    """Извлекает номера семестров, объединяя значения через запятую."""
+    semesters = []
+    
+    def parse_value(val):
+        try:
+            # Извлекаем первое целое число из значения
+            numbers = re.findall(r"\d+", str(val))
+            if not numbers:
+                return None
+            num = int(numbers[0])
+            return num if num > 0 else None
+        except (ValueError, TypeError):
+            return None
+    
+    # Обработка экзамена
+    exam_sem = parse_value(exam_value)
+    if exam_sem is not None:
+        semesters.append(str(exam_sem))
+    
+    # Обработка зачета
+    test_sem = parse_value(test_value)
+    if test_sem is not None:
+        semesters.append(str(test_sem))
+    
+    # Возвращаем объединенные значения через запятую или None
+    return ", ".join(semesters) if semesters else None
 
 def parse_excel(file_path: str) -> List[Dict]:
     """
@@ -499,7 +314,7 @@ def parse_excel(file_path: str) -> List[Dict]:
             (col for col in df_svod.columns if "наименование" in str(col).lower()), None
         )
         dept_col = next(
-            (col for col in df_svod.columns if "кафедра" in str(col).lower()), None
+            (col for col in df_svod.columns if "наименование.1" in str(col).lower()), None
         )
 
         if not disc_col:
@@ -539,6 +354,8 @@ def parse_excel(file_path: str) -> List[Dict]:
                 course_blocks[current_course]["semester_col"] = col
             elif "экз" in col_name.lower():
                 course_blocks[current_course]["exam_col"] = col
+            elif "зачет" in col_name.lower() and not "зачет с оц" in col_name.lower():
+                course_blocks[current_course]["test_col"] = col
             elif "лек" in col_name.lower():
                 course_blocks[current_course]["lecture_col"] = col
             elif "пр" in col_name.lower() and not "пр пр" in col_name.lower():
@@ -549,6 +366,18 @@ def parse_excel(file_path: str) -> List[Dict]:
         print("\nОбнаруженные блоки курсов:")
         for course, blocks in course_blocks.items():
             print(f"{course}: {blocks}")
+
+         # 4. Автопоиск колонок для семестров
+        exam_col = next((col for col in df_plan.columns if "экза" in str(col).lower()), None)
+        test_col = next((col for col in df_plan.columns if "зачет" in str(col).lower()), None)
+
+        if not exam_col or not test_col:
+            available_cols = ", ".join(df_plan.columns)
+            raise ValueError(
+                f"Не найдены колонки с экзаменами и зачетами. Доступные колонки: {available_cols}"
+            )
+
+        print(f"Найдены колонки: Экзамен - '{exam_col}', Зачет - '{test_col}'")
 
         # 5. Обработка данных
         result = []
@@ -562,11 +391,19 @@ def parse_excel(file_path: str) -> List[Dict]:
                 continue
 
             discipline = str(row[disc_col]).strip()
+            if discipline.startswith("Дисциплины по выбору"):
+                continue  # Пропустить эту дисциплину
+
             department = (
                 str(row[dept_col]).strip()
                 if dept_col and pd.notna(row.get(dept_col))
                 else "Не указано"
             )
+            
+            exam_value = row.get(exam_col, None)
+            test_value = row.get(test_col, None)
+            semesters = parse_semester(exam_value, test_value)
+
 
             # Поиск дисциплины в листе План
             hours_data = None
@@ -582,6 +419,7 @@ def parse_excel(file_path: str) -> List[Dict]:
             practice_hours = 0.0
             lab_hours = 0.0
             exam_hours = 0.0
+            test_hours = 0.0
 
             for course, blocks in course_blocks.items():
                 try:
@@ -609,6 +447,14 @@ def parse_excel(file_path: str) -> List[Dict]:
                         )
                         exam_hours = int(val) if pd.notna(val) else 0
 
+                    if "test_col" in blocks:
+                        val = (
+                            hours_data[blocks["test_col"]]
+                            if hours_data is not None
+                            else 0
+                        )
+                        test_hours = int(val) if pd.notna(val) else 0
+
                     if "lab_col" in blocks:
                         val = (
                             hours_data[blocks["lab_col"]]
@@ -622,20 +468,21 @@ def parse_excel(file_path: str) -> List[Dict]:
             item = {
                 "discipline": discipline,
                 "department": department,
+                "semester": semesters,
                 "lecture_hours": lecture_hours,
                 "practice_hours": practice_hours,
                 "exam_ours": exam_hours,
                 "lab_hours": lab_hours,
                 "exam_hours": 0.0,
-                "test_hours": 0.0,
-                "total_practice_hours": practice_hours + lab_hours,
+                "test_hours": test_hours,
+                "total_practice_hours": lecture_hours + practice_hours + lab_hours,
             }
 
             print(f"\nДисциплина: {discipline}")
             print(f"Кафедра: {department}")
-            print(
-                f"Часы: лекции={lecture_hours}, практики={practice_hours}, экзамен в семестре={exam_hours}, лабы={lab_hours}"
-            )
+            print(f"Часы: лекции={lecture_hours}, практики={practice_hours}, лабы={lab_hours}")
+            print(f"Семестр: {semesters if semesters else 'Не указан'}")
+            
 
             result.append(item)
 
@@ -737,7 +584,7 @@ def import_curriculum(
         # Подготовка данных
         for item in curriculum_data:
             item["program_id"] = program.program_id
-            item["semester"] = item.get("semester")
+            item["semester"] = item.get("semester") or None
 
             # Приведение типов
             for field in [
@@ -786,59 +633,59 @@ def import_curriculum(
         )
 
 
-def parse_excel_file_from_bytes(file_bytes: BytesIO):
-    """Парсинг Excel из BytesIO"""
-    try:
-        # Пытаемся определить формат файла
-        try:
-            # Сначала пробуем openpyxl для .xlsx
-            df_svod = pd.read_excel(
-                file_bytes, sheet_name="ПланСвод", header=2, engine="openpyxl"
-            )
-            df_plan = pd.read_excel(
-                file_bytes, sheet_name="План", header=2, engine="openpyxl"
-            )
-        except Exception as e:
-            # Если не получилось, пробуем xlrd для старых .xls
-            file_bytes.seek(0)  # Возвращаем указатель в начало
-            try:
-                df_svod = pd.read_excel(
-                    file_bytes, sheet_name="ПланСвод", header=2, engine="xlrd"
-                )
-                df_plan = pd.read_excel(
-                    file_bytes, sheet_name="План", header=2, engine="xlrd"
-                )
-            except Exception as e:
-                raise ValueError(f"Не удалось прочитать файл как Excel: {str(e)}")
+# def parse_excel_file_from_bytes(file_bytes: BytesIO):
+#     """Парсинг Excel из BytesIO"""
+#     try:
+#         # Пытаемся определить формат файла
+#         try:
+#             # Сначала пробуем openpyxl для .xlsx
+#             df_svod = pd.read_excel(
+#                 file_bytes, sheet_name="ПланСвод", header=2, engine="openpyxl"
+#             )
+#             df_plan = pd.read_excel(
+#                 file_bytes, sheet_name="План", header=2, engine="openpyxl"
+#             )
+#         except Exception as e:
+#             # Если не получилось, пробуем xlrd для старых .xls
+#             file_bytes.seek(0)  # Возвращаем указатель в начало
+#             try:
+#                 df_svod = pd.read_excel(
+#                     file_bytes, sheet_name="ПланСвод", header=2, engine="xlrd"
+#                 )
+#                 df_plan = pd.read_excel(
+#                     file_bytes, sheet_name="План", header=2, engine="xlrd"
+#                 )
+#             except Exception as e:
+#                 raise ValueError(f"Не удалось прочитать файл как Excel: {str(e)}")
 
-        # Дальнейшая обработка данных
-        df_svod.columns = df_svod.columns.str.strip().str.lower()
-        df_plan.columns = df_plan.columns.str.strip().str.lower()
+#         # Дальнейшая обработка данных
+#         df_svod.columns = df_svod.columns.str.strip().str.lower()
+#         df_plan.columns = df_plan.columns.str.strip().str.lower()
 
-        required_columns = {"наименование", "наименование.1"}
-        if not required_columns.issubset(df_svod.columns):
-            raise ValueError(f"Отсутствуют обязательные колонки: {required_columns}")
+#         required_columns = {"наименование", "наименование.1"}
+#         if not required_columns.issubset(df_svod.columns):
+#             raise ValueError(f"Отсутствуют обязательные колонки: {required_columns}")
 
-        if "считать в плане" not in df_plan.columns:
-            raise ValueError("Отсутствует колонка 'считать в плане'")
+#         if "считать в плане" not in df_plan.columns:
+#             raise ValueError("Отсутствует колонка 'считать в плане'")
 
-        # Подготовка данных
-        df_svod_clean = df_svod[["наименование", "наименование.1"]].copy()
-        df_svod_clean.columns = ["дисциплина", "кафедра"]
-        df_svod_clean = df_svod_clean.dropna(subset=["дисциплина"])
-        df_svod_clean["кафедра"] = df_svod_clean["кафедра"].fillna("Не указано")
+#         # Подготовка данных
+#         df_svod_clean = df_svod[["наименование", "наименование.1"]].copy()
+#         df_svod_clean.columns = ["дисциплина", "кафедра"]
+#         df_svod_clean = df_svod_clean.dropna(subset=["дисциплина"])
+#         df_svod_clean["кафедра"] = df_svod_clean["кафедра"].fillna("Не указано")
 
-        df_plan = df_plan[df_plan["считать в плане"] != "-"]
-        df_plan = df_plan.rename(columns={"наименование": "дисциплина"})
+#         df_plan = df_plan[df_plan["считать в плане"] != "-"]
+#         df_plan = df_plan.rename(columns={"наименование": "дисциплина"})
 
-        # Объединение данных
-        df_combined = pd.merge(
-            df_svod_clean, df_plan, on="дисциплина", how="inner"
-        ).fillna(0)
+#         # Объединение данных
+#         df_combined = pd.merge(
+#             df_svod_clean, df_plan, on="дисциплина", how="inner"
+#         ).fillna(0)
 
-        return df_combined
-    except Exception as e:
-        raise ValueError(f"Ошибка парсинга Excel: {str(e)}")
+#         return df_combined
+#     except Exception as e:
+#         raise ValueError(f"Ошибка парсинга Excel: {str(e)}")
 
 
 def safe_convert(value, convert_func, default):

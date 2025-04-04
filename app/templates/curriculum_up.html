@@ -129,6 +129,8 @@
                     }
                     
                     const curriculum = await response.json();
+
+                    
                     
                     if (!curriculum || curriculum.length === 0) {
                         showError('Для выбранной программы нет учебного плана');
