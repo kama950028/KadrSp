@@ -2,7 +2,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 
 # Синхронная строка подключения (без asyncpg)
-SQLALCHEMY_DATABASE_URL = "postgresql://postgres:postgres@localhost/mydb2"
+SQLALCHEMY_DATABASE_URL = "postgresql://postgres:Poi369258147@localhost/mydb2"
 
 engine = create_engine(SQLALCHEMY_DATABASE_URL)
 SessionLocal = sessionmaker(
