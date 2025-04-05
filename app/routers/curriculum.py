@@ -11,6 +11,7 @@ from fastapi.responses import FileResponse
 import logging
 from pathlib import Path
 import os
+from sqlalchemy import func
 
 
 templates = Jinja2Templates(directory="app/templates")
@@ -166,38 +167,30 @@ def test_teachers(curriculum_id: int, db: Session = Depends(get_db)):
 
 @router.get("/debug_teachers")
 def debug_teachers(db: Session = Depends(get_db)):
-    """
-    Возвращает все связи преподавателей с дисциплинами, включая program_id.
-    Полезно для отладки отсутствующих связей в основном API.
-    """
-    # Получаем все связи через JOIN с дополнительной информацией
     query = (
         db.query(
             TaughtDiscipline,
             Teacher,
             Curriculum,
-            EducationProgram.program_id,  # Добавляем program_id
+            EducationProgram.program_id,
         )
         .join(Teacher, TaughtDiscipline.teacher_id == Teacher.teacher_id)
         .join(Curriculum, TaughtDiscipline.curriculum_id == Curriculum.curriculum_id)
         .join(EducationProgram, Curriculum.program_id == EducationProgram.program_id)
     )
-
     results = query.all()
-
+    print("Debug results:", results)  # Логирование для отладки
     return [
         {
-            "program_id": program_id,  # Новое поле
-            "program_name": (
-                curriculum.program.program_name if curriculum.program else None
-            ),
-            "discipline": curriculum.discipline,
-            "department": curriculum.department,
-            "curriculum_id": link.curriculum_id,
+            "program_id": program_id,
+            "program_name": curriculum.program.program_name if curriculum and curriculum.program else None,
+            "discipline": curriculum.discipline if curriculum else None,
+            "department": curriculum.department if curriculum else None,
+            "curriculum_id": link.curriculum_id if link else None,
             "teacher": {
-                "teacher_id": teacher.teacher_id,
-                "full_name": teacher.full_name,
-                "position": teacher.position,
+                "teacher_id": teacher.teacher_id if teacher else None,
+                "full_name": teacher.full_name if teacher else None,
+                "position": teacher.position if teacher else None,
             },
         }
         for link, teacher, curriculum, program_id in results
@@ -245,37 +238,140 @@ async def get_curriculum_page():
 
 @router.get("/programs", response_model=List[EducationProgramBase])
 async def get_all_programs(db: Session = Depends(get_db)):
-    """Получение списка всех образовательных программ"""
+    """Получение списка программ с привязанными дисциплинами"""
     try:
+        # Фильтруем программы, у которых есть хотя бы одна дисциплина
         programs = (
-            db.query(EducationProgram).order_by(EducationProgram.program_name).all()
+            db.query(EducationProgram)
+            .join(Curriculum, EducationProgram.program_id == Curriculum.program_id)
+            .group_by(EducationProgram.program_id)
+            .having(func.count(Curriculum.curriculum_id) > 0)
+            .order_by(EducationProgram.program_name)
+            .all()
         )
-        logger.info(f"Found {len(programs)} programs")
-        if not programs:
-            logger.warning("No programs found in database")
+        
+        logger.info(f"Found {len(programs)} active programs")
         return programs
     except Exception as e:
-        logger.error(f"Error fetching programs: {str(e)}")
-        raise HTTPException(500, detail="Internal server error")
+        logger.error(f"Error: {str(e)}")
+        raise HTTPException(500, detail="Ошибка сервера")
 
+
+# @router.get("/program/{program_id}", response_model=List[CurriculumBase])
+# async def get_curriculum_by_program(program_id: int, db: Session = Depends(get_db)):
+#     """Получение учебного плана по ID программы"""
+#     try:
+#         curriculum = (
+#             db.query(Curriculum)
+#             .options(joinedload(Curriculum.teachers))
+#             .order_by(Curriculum.semester, Curriculum.discipline)
+#             .all()
+#         )
+
+#         if not curriculum:
+#             logger.warning(f"No curriculum found for program_id: {program_id}")
+#             raise HTTPException(404, detail="Учебный план не найден")
+
+#         logger.info(f"Found {len(curriculum)} disciplines for program {program_id}")
+#         return curriculum
+#     except Exception as e:
+#         logger.error(f"Error fetching curriculum: {str(e)}")
+#         raise HTTPException(500, detail="Internal server error")
+    
+from collections import defaultdict
+from typing import Dict, List, Tuple
+
+from sqlalchemy.orm import aliased
+from sqlalchemy import func, distinct, and_, select
 
 @router.get("/program/{program_id}", response_model=List[CurriculumBase])
 async def get_curriculum_by_program(program_id: int, db: Session = Depends(get_db)):
-    """Получение учебного плана по ID программы"""
+    """Получение учебного плана с учетом дисциплин без преподавателей"""
     try:
-        curriculum = (
+        # Шаг 1: Получаем все дисциплины учебного плана
+        curriculum_items = (
             db.query(Curriculum)
-            .options(joinedload(Curriculum.teachers))
-            .order_by(Curriculum.semester, Curriculum.discipline)
+            .filter(Curriculum.program_id == program_id)
+            .order_by(Curriculum.curriculum_id)
             .all()
         )
 
-        if not curriculum:
+        if not curriculum_items:
             logger.warning(f"No curriculum found for program_id: {program_id}")
             raise HTTPException(404, detail="Учебный план не найден")
 
-        logger.info(f"Found {len(curriculum)} disciplines for program {program_id}")
-        return curriculum
+        # Шаг 2: Получаем всех преподавателей для этих дисциплин
+        curriculum_ids = [item.curriculum_id for item in curriculum_items]
+        taught_disciplines = (
+            db.query(TaughtDiscipline)
+            .filter(TaughtDiscipline.curriculum_id.in_(curriculum_ids))
+            .options(joinedload(TaughtDiscipline.teacher))
+            .all()
+        )
+
+        # Шаг 3: Создаем маппинг curriculum_id -> список преподавателей
+        teachers_map = defaultdict(list)
+        for td in taught_disciplines:
+            teachers_map[td.curriculum_id].append(td.teacher)
+
+        # Шаг 4: Формируем результат
+        result = []
+        for item in curriculum_items:
+            # Определяем семестр
+            semester = item.semester[0] if item.semester and isinstance(item.semester, list) else item.semester
+            
+            # Получаем преподавателей для этой дисциплины
+            teachers = teachers_map.get(item.curriculum_id, [])
+            
+            # Создаем объект дисциплины
+            curriculum_data = {
+                "discipline": item.discipline,
+                "department": item.department,
+                "semester": semester,
+                "lecture_hours": item.lecture_hours or 0,
+                "practice_hours": item.practice_hours or 0,
+                "lab_hours": item.lab_hours or 0,
+                "exam_hours": item.exam_hours or 0,
+                "test_hours": item.test_hours or 0,
+                "course_project_hours": item.course_project_hours or 0,
+                "total_practice_hours": item.total_practice_hours or 0,
+                "final_work_hours": item.final_work_hours or 0,
+                "teachers": [{
+                    "teacher_id": t.teacher_id,
+                    "full_name": t.full_name,
+                    "position": t.position
+                } for t in teachers]
+            }
+            
+            result.append(CurriculumBase(**curriculum_data))
+
+        # Логирование для отладки
+        logger.debug(f"Returning {len(result)} curriculum items")
+        logger.debug(f"Items without teachers: {sum(1 for item in result if not item.teachers)}")
+        
+        return result
+
     except Exception as e:
-        logger.error(f"Error fetching curriculum: {str(e)}")
+        logger.error(f"Error: {str(e)}", exc_info=True)
         raise HTTPException(500, detail="Internal server error")
+
+# Временный эндпоинт для проверки сырых данных
+@router.get("/debug/program/{program_id}")
+async def debug_curriculum(program_id: int, db: Session = Depends(get_db)):
+    stmt = db.query(
+        Curriculum.discipline,
+        Curriculum.department,
+        Curriculum.semester,
+        func.count(Curriculum.curriculum_id).label("count")
+    ).filter(
+        Curriculum.program_id == program_id
+    ).group_by(
+        Curriculum.discipline,
+        Curriculum.department,
+        Curriculum.semester
+    ).having(
+        func.count(Curriculum.curriculum_id) > 1
+    )
+    
+    duplicates = stmt.all()
+    return {"duplicates": duplicates}

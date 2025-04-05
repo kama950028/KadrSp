@@ -90,111 +90,222 @@ def parse_docx(file_path: str):
     return teachers
 
 
+# def import_teachers_with_programs(db: Session, teachers_data: list):
+#     """
+#     Импортирует преподавателей, привязывает их к образовательным программам и дисциплинам.
+#     """
+#     for entry in teachers_data:
+#         # Проверяем, существует ли преподаватель
+#         teacher = db.query(Teacher).filter_by(full_name=entry["full_name"]).first()
+#         if not teacher:
+#             # Создаем нового преподавателя
+#             teacher = Teacher(
+#                 full_name=entry["full_name"],
+#                 position=entry["position"],
+#                 education_level=entry["education_level"],
+#                 total_experience=entry.get("total_experience", 0),
+#                 teaching_experience=entry.get("teaching_experience", 0),
+#                 professional_experience=entry.get("professional_experience", 0),
+#                 academic_degree=entry.get("academic_degree"),
+#                 academic_title=entry.get("academic_title"),
+#             )
+#             db.add(teacher)
+#             db.commit()
+#             db.refresh(teacher)
+
+#         # Обработка образовательных программ
+#         programs_raw = entry.get("programs_raw", "")
+#         programs = [
+#             p.strip() for p in programs_raw.split(";") if p.strip()
+#         ]  # Разделяем строку на отдельные программы
+
+#         for program_name in programs:
+#             # Проверяем, существует ли программа
+#             program = (
+#                 db.query(EducationProgram).filter_by(program_name=program_name).first()
+#             )
+#             if not program:
+#                 # Генерация short_name из профиля в скобках
+#                 profile_match = re.search(r"\((.*?)\)", program_name)
+#                 profile = profile_match.group(1) if profile_match else "UNKNOWN"
+#                 short_name = f"{program_name.split()[0]}_{''.join(word[0] for word in profile.split())}_2023"
+
+#                 # Проверяем уникальность short_name
+#                 counter = 1
+#                 base_short_name = short_name
+#                 while (
+#                     db.query(EducationProgram).filter_by(short_name=short_name).first()
+#                 ):
+#                     short_name = f"{base_short_name}_{counter}"
+#                     counter += 1
+
+#                 # Создаем новую программу
+#                 program = EducationProgram(
+#                     program_name=program_name, short_name=short_name, year=2023
+#                 )
+#                 db.add(program)
+#                 db.commit()
+#                 db.refresh(program)
+
+#             # Привязываем преподавателя к программе
+#             if program not in teacher.programs:
+#                 teacher.programs.append(program)
+
+#         # Обработка дисциплин
+#         disciplines_raw = entry.get("disciplines_raw", "")
+#         disciplines = [
+#             d.strip() for d in disciplines_raw.split(";") if d.strip()
+#         ]  # Разделяем строку на дисциплины
+
+#         for discipline_name in disciplines:
+#             # Приведение названия дисциплины к стандартному виду
+#             normalized_name = discipline_name.strip().lower()
+
+#             # Проверяем, существует ли дисциплина с учётом регистра и лишних пробелов
+#             discipline = (
+#                 db.query(Curriculum)
+#                 .filter(Curriculum.discipline.ilike(f"%{normalized_name}%"))
+#                 .first()
+#             )
+
+#             if not discipline:
+#                 # Создаем новую дисциплину
+#                 discipline = Curriculum(
+#                     discipline=discipline_name.strip(), department="Не указано"
+#                 )
+#                 db.add(discipline)
+#                 db.commit()
+#                 db.refresh(discipline)
+
+#             # Привязываем преподавателя к дисциплине через TaughtDiscipline
+#             taught_discipline = (
+#                 db.query(TaughtDiscipline)
+#                 .filter_by(
+#                     teacher_id=teacher.teacher_id,
+#                     curriculum_id=discipline.curriculum_id,
+#                 )
+#                 .first()
+#             )
+#             if not taught_discipline:
+#                 taught_discipline = TaughtDiscipline(
+#                     teacher_id=teacher.teacher_id,
+#                     curriculum_id=discipline.curriculum_id,
+#                 )
+#                 db.add(taught_discipline)
+
+#         db.commit()
+
 def import_teachers_with_programs(db: Session, teachers_data: list):
     """
-    Импортирует преподавателей, привязывает их к образовательным программам и дисциплинам.
+    Улучшенный импорт с автоматической привязкой к программам и дисциплинам.
     """
     for entry in teachers_data:
-        # Проверяем, существует ли преподаватель
-        teacher = db.query(Teacher).filter_by(full_name=entry["full_name"]).first()
-        if not teacher:
-            # Создаем нового преподавателя
-            teacher = Teacher(
-                full_name=entry["full_name"],
-                position=entry["position"],
-                education_level=entry["education_level"],
-                total_experience=entry.get("total_experience", 0),
-                teaching_experience=entry.get("teaching_experience", 0),
-                professional_experience=entry.get("professional_experience", 0),
-                academic_degree=entry.get("academic_degree"),
-                academic_title=entry.get("academic_title"),
-            )
-            db.add(teacher)
+        try:
+            # Начало транзакции
+            db.begin()
+
+            # Поиск или создание преподавателя
+            teacher = db.query(Teacher).filter(
+                func.lower(Teacher.full_name) == func.lower(entry["full_name"])
+            ).first()
+
+            if not teacher:
+                teacher = Teacher(
+                    full_name=entry["full_name"].strip(),
+                    position=entry["position"],
+                    education_level=entry["education_level"],
+                    total_experience=entry.get("total_experience", 0),
+                    teaching_experience=entry.get("teaching_experience", 0),
+                    professional_experience=entry.get("professional_experience", 0),
+                    academic_degree=entry.get("academic_degree"),
+                    academic_title=entry.get("academic_title"),
+                )
+                db.add(teacher)
+                db.flush()
+
+            # Обработка образовательных программ
+            programs = [p.strip() for p in entry.get("programs_raw", "").split(";") if p.strip()]
+            
+            for program_name in programs:
+                program = db.query(EducationProgram).filter_by(program_name=program_name).first()
+                if not program:
+                    profile_match = re.search(r"\((.*?)\)", program_name)
+                    profile = profile_match.group(1) if profile_match else "UNKNOWN"
+                    
+                    # Список исключаемых союзов
+                    stop_words = {"и", "или", "a", "но"}
+                    
+                    # Формируем инициалы профиля, исключая союзы
+                    profile_initials = "".join([
+                        word[0].upper() 
+                        for word in re.findall(r'\b\w+\b', profile)  # Разделяем на слова, игнорируя пунктуацию
+                        if re.sub(r'[^\w]', '', word).lower() not in stop_words
+                    ])
+                    
+                    # Формирование short_name
+                    program_part = program_name.split()[0].upper()
+                    short_name = f"{program_part}_{profile_initials}_2023"
+
+                    # Проверка уникальности
+                    counter = 1
+                    base_short_name = short_name
+                    while db.query(EducationProgram).filter_by(short_name=short_name).first():
+                        short_name = f"{base_short_name}_{counter}"
+                        counter += 1
+
+                    program = EducationProgram(
+                        program_name=program_name, 
+                        short_name=short_name, 
+                        year=2023
+                    )
+                    db.add(program)
+                    db.commit()
+                    db.flush()
+
+                # Привязка преподавателя к программе
+                if program not in teacher.programs:
+                    teacher.programs.append(program)
+
+            # Обработка дисциплин с привязкой к программам
+            disciplines = [d.strip() for d in entry.get("disciplines_raw", "").split(";") if d.strip()]
+            
+            for discipline_name in disciplines:
+                # Поиск или создание дисциплины для конкретной программы
+                curriculum = db.query(Curriculum).filter(
+                    Curriculum.discipline == discipline_name,
+                    Curriculum.program_id == program.program_id
+                ).first()
+                
+                if not curriculum:
+                    curriculum = Curriculum(
+                        discipline=discipline_name,
+                        program_id=program.program_id,
+                        department="Не указано"
+                    )
+                    db.add(curriculum)
+                    db.commit()
+                    db.flush()
+
+                # Привязка преподавателя к дисциплине
+                if not db.query(TaughtDiscipline).filter_by(
+                    teacher_id=teacher.teacher_id,
+                    curriculum_id=curriculum.curriculum_id
+                ).first():
+                    td = TaughtDiscipline(
+                        teacher_id=teacher.teacher_id,
+                        curriculum_id=curriculum.curriculum_id
+                    )
+                    db.add(td)
+                    db.commit()
+            print(f"Добавлен преподаватель: {teacher.full_name}")
+            print(f"Привязка к программе: {program.program_name}, дисциплина: {discipline_name}")
+            # Фиксация изменений
             db.commit()
-            db.refresh(teacher)
 
-        # Обработка образовательных программ
-        programs_raw = entry.get("programs_raw", "")
-        programs = [
-            p.strip() for p in programs_raw.split(";") if p.strip()
-        ]  # Разделяем строку на отдельные программы
-
-        for program_name in programs:
-            # Проверяем, существует ли программа
-            program = (
-                db.query(EducationProgram).filter_by(program_name=program_name).first()
-            )
-            if not program:
-                # Генерация short_name из профиля в скобках
-                profile_match = re.search(r"\((.*?)\)", program_name)
-                profile = profile_match.group(1) if profile_match else "UNKNOWN"
-                short_name = f"{program_name.split()[0]}_{''.join(word[0] for word in profile.split())}_2023"
-
-                # Проверяем уникальность short_name
-                counter = 1
-                base_short_name = short_name
-                while (
-                    db.query(EducationProgram).filter_by(short_name=short_name).first()
-                ):
-                    short_name = f"{base_short_name}_{counter}"
-                    counter += 1
-
-                # Создаем новую программу
-                program = EducationProgram(
-                    program_name=program_name, short_name=short_name, year=2023
-                )
-                db.add(program)
-                db.commit()
-                db.refresh(program)
-
-            # Привязываем преподавателя к программе
-            if program not in teacher.programs:
-                teacher.programs.append(program)
-
-        # Обработка дисциплин
-        disciplines_raw = entry.get("disciplines_raw", "")
-        disciplines = [
-            d.strip() for d in disciplines_raw.split(";") if d.strip()
-        ]  # Разделяем строку на дисциплины
-
-        for discipline_name in disciplines:
-            # Приведение названия дисциплины к стандартному виду
-            normalized_name = discipline_name.strip().lower()
-
-            # Проверяем, существует ли дисциплина с учётом регистра и лишних пробелов
-            discipline = (
-                db.query(Curriculum)
-                .filter(Curriculum.discipline.ilike(f"%{normalized_name}%"))
-                .first()
-            )
-
-            if not discipline:
-                # Создаем новую дисциплину
-                discipline = Curriculum(
-                    discipline=discipline_name.strip(), department="Не указано"
-                )
-                db.add(discipline)
-                db.commit()
-                db.refresh(discipline)
-
-            # Привязываем преподавателя к дисциплине через TaughtDiscipline
-            taught_discipline = (
-                db.query(TaughtDiscipline)
-                .filter_by(
-                    teacher_id=teacher.teacher_id,
-                    curriculum_id=discipline.curriculum_id,
-                )
-                .first()
-            )
-            if not taught_discipline:
-                taught_discipline = TaughtDiscipline(
-                    teacher_id=teacher.teacher_id,
-                    curriculum_id=discipline.curriculum_id,
-                )
-                db.add(taught_discipline)
-
-        db.commit()
-
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Ошибка импорта преподавателя {entry['full_name']}: {str(e)}")
+            continue
 
 
 
@@ -573,13 +684,13 @@ def import_curriculum(
                 detail="Некорректное имя файла. Ожидается формат: КОД_ПРОФИЛЬ_ИНСТИТУТ_ГОД.xlsx",
             )
 
-        # Очистка старых данных
-        deleted_count = (
-            db.query(Curriculum)
-            .filter(Curriculum.program_id == program.program_id)
-            .delete(synchronize_session=False)
-        )
-        logger.info(f"Удалено {deleted_count} старых записей учебного плана")
+        # # Очистка старых данных
+        # deleted_count = (
+        #     db.query(Curriculum)
+        #     .filter(Curriculum.program_id == program.program_id)
+        #     .delete(synchronize_session=False)
+        # )
+        # logger.info(f"Удалено {deleted_count} старых записей учебного плана")
 
         # Подготовка данных
         for item in curriculum_data:
@@ -633,59 +744,6 @@ def import_curriculum(
         )
 
 
-# def parse_excel_file_from_bytes(file_bytes: BytesIO):
-#     """Парсинг Excel из BytesIO"""
-#     try:
-#         # Пытаемся определить формат файла
-#         try:
-#             # Сначала пробуем openpyxl для .xlsx
-#             df_svod = pd.read_excel(
-#                 file_bytes, sheet_name="ПланСвод", header=2, engine="openpyxl"
-#             )
-#             df_plan = pd.read_excel(
-#                 file_bytes, sheet_name="План", header=2, engine="openpyxl"
-#             )
-#         except Exception as e:
-#             # Если не получилось, пробуем xlrd для старых .xls
-#             file_bytes.seek(0)  # Возвращаем указатель в начало
-#             try:
-#                 df_svod = pd.read_excel(
-#                     file_bytes, sheet_name="ПланСвод", header=2, engine="xlrd"
-#                 )
-#                 df_plan = pd.read_excel(
-#                     file_bytes, sheet_name="План", header=2, engine="xlrd"
-#                 )
-#             except Exception as e:
-#                 raise ValueError(f"Не удалось прочитать файл как Excel: {str(e)}")
-
-#         # Дальнейшая обработка данных
-#         df_svod.columns = df_svod.columns.str.strip().str.lower()
-#         df_plan.columns = df_plan.columns.str.strip().str.lower()
-
-#         required_columns = {"наименование", "наименование.1"}
-#         if not required_columns.issubset(df_svod.columns):
-#             raise ValueError(f"Отсутствуют обязательные колонки: {required_columns}")
-
-#         if "считать в плане" not in df_plan.columns:
-#             raise ValueError("Отсутствует колонка 'считать в плане'")
-
-#         # Подготовка данных
-#         df_svod_clean = df_svod[["наименование", "наименование.1"]].copy()
-#         df_svod_clean.columns = ["дисциплина", "кафедра"]
-#         df_svod_clean = df_svod_clean.dropna(subset=["дисциплина"])
-#         df_svod_clean["кафедра"] = df_svod_clean["кафедра"].fillna("Не указано")
-
-#         df_plan = df_plan[df_plan["считать в плане"] != "-"]
-#         df_plan = df_plan.rename(columns={"наименование": "дисциплина"})
-
-#         # Объединение данных
-#         df_combined = pd.merge(
-#             df_svod_clean, df_plan, on="дисциплина", how="inner"
-#         ).fillna(0)
-
-#         return df_combined
-#     except Exception as e:
-#         raise ValueError(f"Ошибка парсинга Excel: {str(e)}")
 
 
 def safe_convert(value, convert_func, default):

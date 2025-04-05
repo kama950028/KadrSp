@@ -92,19 +92,18 @@
             async function loadPrograms() {
                 try {
                     const response = await fetch('/curriculum/programs');
-                    
-                    if (!response.ok) {
-                        throw new Error(`HTTP error! status: ${response.status}`);
-                    }
+                    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
                     
                     const programs = await response.json();
                     
+                    // Если нет программ с данными
                     if (!programs || programs.length === 0) {
-                        elements.select.innerHTML = '<option selected disabled value="">Программы не найдены</option>';
-                        elements.error.textContent = 'В системе нет образовательных программ';
+                        elements.select.innerHTML = '<option selected disabled value="">Нет активных программ</option>';
+                        elements.error.textContent = 'Все программы пусты';
                         return;
                     }
                     
+                    // Очистка и заполнение списка
                     elements.select.innerHTML = '<option selected disabled value="">Выберите программу</option>';
                     programs.forEach(program => {
                         const option = document.createElement('option');
@@ -114,9 +113,9 @@
                     });
                     
                 } catch (error) {
-                    console.error('Ошибка загрузки программ:', error);
+                    console.error('Ошибка:', error);
                     elements.select.innerHTML = '<option selected disabled value="">Ошибка загрузки</option>';
-                    elements.error.textContent = 'Не удалось загрузить список программ';
+                    elements.error.textContent = 'Не удалось загрузить программы';
                 }
             }
 
@@ -156,12 +155,12 @@
                     row.innerHTML = `
                         <td>${item.discipline || '-'}</td>
                         <td>${item.department || 'Не указано'}</td>
-                        <td>${item.semester || '-'}</td>
+                        <td>${Array.isArray(item.semester) ? item.semester.join(', ') : item.semester || '-'}</td>
                         <td>${item.lecture_hours || '0'}</td>
                         <td>${item.practice_hours || '0'}</td>
-                        <td>${item.exam_hours ? 'Да' : 'Нет'}</td>
-                        <td>${item.test_hours ? 'Да' : 'Нет'}</td>
-                        <td>${item.teachers?.map(t => t.full_name).join(', ') || 'Не назначены'}</td>
+                        <td>${item.exam_hours || 'Нет'}</td>
+                        <td>${item.test_hours || 'Нет'}</td>
+                        <td>${item.teachers?.length ? item.teachers.map(t => t.full_name).join(', ') : 'Не назначены'}</td>
                     `;
                     elements.body.appendChild(row);
                 });

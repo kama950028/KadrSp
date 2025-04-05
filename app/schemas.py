@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, validator
 from typing import List, Optional
 
 class QualificationBase(BaseModel):
@@ -53,13 +53,25 @@ class TeacherBase(BaseModel):
 
 
 class CurriculumBase(BaseModel):
-    curriculum_id: int
     discipline: str
-    department: str
-    teachers: List[TeacherBase] = []  # Добавлено поле с преподавателями
+    department: Optional[str]
+    semester: Optional[List[int]] = None  # Теперь здесь будет int
+    lecture_hours: Optional[int]
+    practice_hours: Optional[int]
+    exam_hours: Optional[int]
+    test_hours: Optional[int]
+    teachers: List[TeacherBase] = []
+
+    # # Добавьте кастомный валидатор
+    @validator("semester", pre=True)
+    def convert_semester(cls, value):
+        if isinstance(value, int):
+            return [value]  # Преобразует число в список
+        return value  # Оставляет список без изменений
+
 
     class Config:
-        from_attributes = True
+        orm_mode = True
 
 class EducationProgramBase(BaseModel):
     program_id: int

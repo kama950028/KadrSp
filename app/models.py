@@ -43,6 +43,7 @@ class Teacher(Base):
     taught_disciplines = relationship("TaughtDiscipline", back_populates="teacher", overlaps="disciplines,curriculum")
     disciplines = relationship("Curriculum", secondary="taught_disciplines", back_populates="teachers", lazy="joined", overlaps="taught_disciplines,curriculum")
     programs = relationship("EducationProgram", secondary=teacher_program_association, back_populates="teachers")
+    curriculum = relationship("Curriculum", secondary="taught_disciplines", overlaps="teachers", back_populates="teachers")
 
 # Таблица квалификаций преподавателей
 class Qualification(Base):
@@ -122,7 +123,7 @@ class Curriculum(Base):
     program = relationship("EducationProgram", back_populates="curriculum")  # Связь с образовательной программой
     
     # Добавляем связь с преподавателями через таблицу TaughtDiscipline
-    teachers = relationship("Teacher", secondary="taught_disciplines", back_populates="disciplines", lazy="selectin", overlaps="taught_disciplines,curriculum")
+    teachers = relationship("Teacher", secondary="taught_disciplines", back_populates="curriculum", lazy="joined", overlaps="taught_disciplines,curriculum")
     taught_disciplines = relationship("TaughtDiscipline", back_populates="curriculum", overlaps="teachers,disciplines")
     
     @property
