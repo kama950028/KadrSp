@@ -12,7 +12,7 @@ import logging
 from pathlib import Path
 import os
 from sqlalchemy import func
-
+from app.services.import_utils import link_teachers_to_disciplines
 
 templates = Jinja2Templates(directory="app/templates")
 
@@ -355,7 +355,6 @@ async def get_curriculum_by_program(program_id: int, db: Session = Depends(get_d
         logger.error(f"Error: {str(e)}", exc_info=True)
         raise HTTPException(500, detail="Internal server error")
 
-# Временный эндпоинт для проверки сырых данных
 @router.get("/debug/program/{program_id}")
 async def debug_curriculum(program_id: int, db: Session = Depends(get_db)):
     stmt = db.query(
@@ -374,4 +373,46 @@ async def debug_curriculum(program_id: int, db: Session = Depends(get_db)):
     )
     
     duplicates = stmt.all()
-    return {"duplicates": duplicates}
+
+    # Проверяем преподавателей для каждой дисциплины
+    disciplines = db.query(Curriculum).filter(Curriculum.program_id == program_id).all()
+    result = []
+    for discipline in disciplines:
+        teachers = db.query(Teacher).join(TaughtDiscipline).filter(
+            TaughtDiscipline.curriculum_id == discipline.curriculum_id
+        ).all()
+        result.append({
+            "discipline": discipline.discipline,
+            "department": discipline.department,
+            "semester": discipline.semester,
+            "teachers": [teacher.full_name for teacher in teachers]
+        })
+
+    return {"duplicates": duplicates, "disciplines": result}
+
+
+@router.get("/debug/match")
+def debug_match(db: Session = Depends(get_db)):
+    """
+    Проверяет совпадение дисциплин и преподавателей по названию.
+    """
+    results = []
+    disciplines = db.query(Curriculum).all()
+    teachers = db.query(Teacher).options(joinedload(Teacher.disciplines)).all()
+
+    for teacher in teachers:
+        for discipline in teacher.disciplines:  # Итерируемся по объектам Curriculum
+            discipline_name = discipline.discipline.strip()  # Получаем название дисциплины
+            matched_discipline = db.query(Curriculum).filter(Curriculum.discipline.ilike(discipline_name)).first()
+            results.append({
+                "teacher": teacher.full_name,
+                "discipline": discipline_name,
+                "matched": bool(matched_discipline)
+            })
+
+    return results
+
+@router.post("/debug/link-teachers-to-disciplines")
+def link_teachers(db: Session = Depends(get_db)):
+    link_teachers_to_disciplines(db)
+    return {"status": "success", "message": "Teachers linked to disciplines"}

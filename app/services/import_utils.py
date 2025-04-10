@@ -90,110 +90,6 @@ def parse_docx(file_path: str):
     return teachers
 
 
-# def import_teachers_with_programs(db: Session, teachers_data: list):
-#     """
-#     Импортирует преподавателей, привязывает их к образовательным программам и дисциплинам.
-#     """
-#     for entry in teachers_data:
-#         # Проверяем, существует ли преподаватель
-#         teacher = db.query(Teacher).filter_by(full_name=entry["full_name"]).first()
-#         if not teacher:
-#             # Создаем нового преподавателя
-#             teacher = Teacher(
-#                 full_name=entry["full_name"],
-#                 position=entry["position"],
-#                 education_level=entry["education_level"],
-#                 total_experience=entry.get("total_experience", 0),
-#                 teaching_experience=entry.get("teaching_experience", 0),
-#                 professional_experience=entry.get("professional_experience", 0),
-#                 academic_degree=entry.get("academic_degree"),
-#                 academic_title=entry.get("academic_title"),
-#             )
-#             db.add(teacher)
-#             db.commit()
-#             db.refresh(teacher)
-
-#         # Обработка образовательных программ
-#         programs_raw = entry.get("programs_raw", "")
-#         programs = [
-#             p.strip() for p in programs_raw.split(";") if p.strip()
-#         ]  # Разделяем строку на отдельные программы
-
-#         for program_name in programs:
-#             # Проверяем, существует ли программа
-#             program = (
-#                 db.query(EducationProgram).filter_by(program_name=program_name).first()
-#             )
-#             if not program:
-#                 # Генерация short_name из профиля в скобках
-#                 profile_match = re.search(r"\((.*?)\)", program_name)
-#                 profile = profile_match.group(1) if profile_match else "UNKNOWN"
-#                 short_name = f"{program_name.split()[0]}_{''.join(word[0] for word in profile.split())}_2023"
-
-#                 # Проверяем уникальность short_name
-#                 counter = 1
-#                 base_short_name = short_name
-#                 while (
-#                     db.query(EducationProgram).filter_by(short_name=short_name).first()
-#                 ):
-#                     short_name = f"{base_short_name}_{counter}"
-#                     counter += 1
-
-#                 # Создаем новую программу
-#                 program = EducationProgram(
-#                     program_name=program_name, short_name=short_name, year=2023
-#                 )
-#                 db.add(program)
-#                 db.commit()
-#                 db.refresh(program)
-
-#             # Привязываем преподавателя к программе
-#             if program not in teacher.programs:
-#                 teacher.programs.append(program)
-
-#         # Обработка дисциплин
-#         disciplines_raw = entry.get("disciplines_raw", "")
-#         disciplines = [
-#             d.strip() for d in disciplines_raw.split(";") if d.strip()
-#         ]  # Разделяем строку на дисциплины
-
-#         for discipline_name in disciplines:
-#             # Приведение названия дисциплины к стандартному виду
-#             normalized_name = discipline_name.strip().lower()
-
-#             # Проверяем, существует ли дисциплина с учётом регистра и лишних пробелов
-#             discipline = (
-#                 db.query(Curriculum)
-#                 .filter(Curriculum.discipline.ilike(f"%{normalized_name}%"))
-#                 .first()
-#             )
-
-#             if not discipline:
-#                 # Создаем новую дисциплину
-#                 discipline = Curriculum(
-#                     discipline=discipline_name.strip(), department="Не указано"
-#                 )
-#                 db.add(discipline)
-#                 db.commit()
-#                 db.refresh(discipline)
-
-#             # Привязываем преподавателя к дисциплине через TaughtDiscipline
-#             taught_discipline = (
-#                 db.query(TaughtDiscipline)
-#                 .filter_by(
-#                     teacher_id=teacher.teacher_id,
-#                     curriculum_id=discipline.curriculum_id,
-#                 )
-#                 .first()
-#             )
-#             if not taught_discipline:
-#                 taught_discipline = TaughtDiscipline(
-#                     teacher_id=teacher.teacher_id,
-#                     curriculum_id=discipline.curriculum_id,
-#                 )
-#                 db.add(taught_discipline)
-
-#         db.commit()
 
 def import_teachers_with_programs(db: Session, teachers_data: list):
     """
@@ -308,6 +204,57 @@ def import_teachers_with_programs(db: Session, teachers_data: list):
             continue
 
 
+def import_teachers_with_disciplines(db: Session, teachers_data: list):
+    """
+    Импортирует преподавателей и связывает их с дисциплинами.
+    """
+    for entry in teachers_data:
+        try:
+            # Поиск или создание преподавателя
+            teacher = db.query(Teacher).filter(
+                func.lower(Teacher.full_name) == func.lower(entry["full_name"])
+            ).first()
+
+            if not teacher:
+                teacher = Teacher(
+                    full_name=entry["full_name"].strip(),
+                    position=entry["position"],
+                    education_level=entry["education_level"],
+                    total_experience=entry.get("total_experience", 0),
+                    teaching_experience=entry.get("teaching_experience", 0),
+                    professional_experience=entry.get("professional_experience", 0),
+                    academic_degree=entry.get("academic_degree"),
+                    academic_title=entry.get("academic_title"),
+                )
+                db.add(teacher)
+                db.flush()
+
+            # Обработка дисциплин
+            disciplines = [d.strip() for d in entry.get("disciplines_raw", "").split(";") if d.strip()]
+            
+            for discipline_name in disciplines:
+                # Поиск дисциплины
+                discipline = db.query(Curriculum).filter(
+                    Curriculum.discipline.ilike(discipline_name)
+                ).first()
+
+                if discipline:
+                    # Привязка преподавателя к дисциплине
+                    if not db.query(TaughtDiscipline).filter_by(
+                        teacher_id=teacher.teacher_id,
+                        curriculum_id=discipline.curriculum_id
+                    ).first():
+                        link = TaughtDiscipline(
+                            teacher_id=teacher.teacher_id,
+                            curriculum_id=discipline.curriculum_id
+                        )
+                        db.add(link)
+                        db.commit()
+
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Ошибка импорта преподавателя {entry['full_name']}: {str(e)}")
+            continue
 
 
 
@@ -340,7 +287,137 @@ def assign_teacher_to_program(db: Session, teacher_id: int, program_id: int):
         )
 
 
+def import_curriculum(
+    file_path: str, filename: str, db: Session, background_tasks: BackgroundTasks
+):
+    """
+    Улучшенная функция импорта учебного плана.
+    Включает расширенную диагностику и обработку ошибок.
+    """
+    try:
+        # Проверка файла
+        if not os.path.exists(file_path):
+            raise HTTPException(status_code=400, detail="Файл не найден")
 
+        if not filename.lower().endswith((".xlsx", ".xls")):
+            raise HTTPException(
+                status_code=400,
+                detail="Поддерживаются только файлы Excel (.xlsx, .xls)",
+            )
+
+        # Диагностика перед парсингом
+        try:
+            # Пробуем прочитать файл для диагностики
+            diagnostic_df = pd.read_excel(file_path, sheet_name=None, nrows=1)
+            print("Диагностика файла:")
+            for sheet_name, df in diagnostic_df.items():
+                print(f"Лист '{sheet_name}': колонки - {df.columns.tolist()}")
+        except Exception as e:
+            logger.warning(f"Диагностика файла не удалась: {str(e)}")
+
+        # Парсинг данных
+        try:
+            curriculum_data = parse_excel(file_path)
+        except ValueError as e:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "message": str(e),
+                    "advice": "Проверьте, что файл содержит листы 'ПланСвод' и 'План' с корректными колонками",
+                },
+            )
+
+        if not curriculum_data:
+            raise HTTPException(
+                status_code=400,
+                detail="Файл не содержит данных для импорта. Проверьте формат файла.",
+            )
+
+        # Определение программы
+        try:
+            program_code = filename.split("_")[0]
+            program = (
+                db.query(EducationProgram)
+                .filter(EducationProgram.short_name.ilike(f"{program_code}%"))
+                .first()
+            )
+
+            if not program:
+                available_programs = db.query(EducationProgram.short_name).all()
+                raise HTTPException(
+                    status_code=404,
+                    detail={
+                        "message": f"Программа с кодом {program_code} не найдена",
+                        "available_programs": [
+                            p[0] for p in available_programs if p[0]
+                        ],
+                        "filename_pattern": "Ожидается формат: КОД_ПРОФИЛЬ_ИНСТИТУТ_ГОД.xlsx",
+                    },
+                )
+        except IndexError:
+            raise HTTPException(
+                status_code=400,
+                detail="Некорректное имя файла. Ожидается формат: КОД_ПРОФИЛЬ_ИНСТИТУТ_ГОД.xlsx",
+            )
+
+        # # Очистка старых данных
+        # deleted_count = (
+        #     db.query(Curriculum)
+        #     .filter(Curriculum.program_id == program.program_id)
+        #     .delete(synchronize_session=False)
+        # )
+        # logger.info(f"Удалено {deleted_count} старых записей учебного плана")
+
+        # Подготовка данных
+        for item in curriculum_data:
+            item["program_id"] = program.program_id
+            item["semester"] = item.get("semester") or None
+
+            # Приведение типов
+            for field in [
+                "lecture_hours",
+                "practice_hours",
+                "lab_hours",
+                "exam_hours",
+                "test_hours",
+            ]:
+                item[field] = float(item.get(field, 0))
+
+        # Вставка данных
+        try:
+            db.bulk_insert_mappings(Curriculum, curriculum_data)
+            db.commit()
+            logger.info(f"Успешно импортировано {len(curriculum_data)} дисциплин")
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Ошибка при вставке данных: {str(e)}", exc_info=True)
+            raise HTTPException(
+                status_code=500, detail=f"Ошибка базы данных при импорте: {str(e)}"
+            )
+
+        # Очистка
+        background_tasks.add_task(
+            lambda: os.remove(file_path) if os.path.exists(file_path) else None
+        )
+
+        return {
+            "status": "success",
+            "imported_count": len(curriculum_data),
+            "program_id": program.program_id,
+            "program_name": program.program_name,
+            "details": {
+                "disciplines": [d["discipline"] for d in curriculum_data[:3]] + ["..."],
+                "departments": list(set(d["department"] for d in curriculum_data)),
+            },
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Критическая ошибка импорта: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500, detail=f"Внутренняя ошибка сервера: {str(e)}"
+        )
 
 
 
@@ -611,138 +688,6 @@ def parse_excel(file_path: str) -> List[Dict]:
         raise ValueError(f"Ошибка чтения файла: {str(e)}")
 
 
-def import_curriculum(
-    file_path: str, filename: str, db: Session, background_tasks: BackgroundTasks
-):
-    """
-    Улучшенная функция импорта учебного плана.
-    Включает расширенную диагностику и обработку ошибок.
-    """
-    try:
-        # Проверка файла
-        if not os.path.exists(file_path):
-            raise HTTPException(status_code=400, detail="Файл не найден")
-
-        if not filename.lower().endswith((".xlsx", ".xls")):
-            raise HTTPException(
-                status_code=400,
-                detail="Поддерживаются только файлы Excel (.xlsx, .xls)",
-            )
-
-        # Диагностика перед парсингом
-        try:
-            # Пробуем прочитать файл для диагностики
-            diagnostic_df = pd.read_excel(file_path, sheet_name=None, nrows=1)
-            print("Диагностика файла:")
-            for sheet_name, df in diagnostic_df.items():
-                print(f"Лист '{sheet_name}': колонки - {df.columns.tolist()}")
-        except Exception as e:
-            logger.warning(f"Диагностика файла не удалась: {str(e)}")
-
-        # Парсинг данных
-        try:
-            curriculum_data = parse_excel(file_path)
-        except ValueError as e:
-            raise HTTPException(
-                status_code=422,
-                detail={
-                    "message": str(e),
-                    "advice": "Проверьте, что файл содержит листы 'ПланСвод' и 'План' с корректными колонками",
-                },
-            )
-
-        if not curriculum_data:
-            raise HTTPException(
-                status_code=400,
-                detail="Файл не содержит данных для импорта. Проверьте формат файла.",
-            )
-
-        # Определение программы
-        try:
-            program_code = filename.split("_")[0]
-            program = (
-                db.query(EducationProgram)
-                .filter(EducationProgram.short_name.ilike(f"{program_code}%"))
-                .first()
-            )
-
-            if not program:
-                available_programs = db.query(EducationProgram.short_name).all()
-                raise HTTPException(
-                    status_code=404,
-                    detail={
-                        "message": f"Программа с кодом {program_code} не найдена",
-                        "available_programs": [
-                            p[0] for p in available_programs if p[0]
-                        ],
-                        "filename_pattern": "Ожидается формат: КОД_ПРОФИЛЬ_ИНСТИТУТ_ГОД.xlsx",
-                    },
-                )
-        except IndexError:
-            raise HTTPException(
-                status_code=400,
-                detail="Некорректное имя файла. Ожидается формат: КОД_ПРОФИЛЬ_ИНСТИТУТ_ГОД.xlsx",
-            )
-
-        # # Очистка старых данных
-        # deleted_count = (
-        #     db.query(Curriculum)
-        #     .filter(Curriculum.program_id == program.program_id)
-        #     .delete(synchronize_session=False)
-        # )
-        # logger.info(f"Удалено {deleted_count} старых записей учебного плана")
-
-        # Подготовка данных
-        for item in curriculum_data:
-            item["program_id"] = program.program_id
-            item["semester"] = item.get("semester") or None
-
-            # Приведение типов
-            for field in [
-                "lecture_hours",
-                "practice_hours",
-                "lab_hours",
-                "exam_hours",
-                "test_hours",
-            ]:
-                item[field] = float(item.get(field, 0))
-
-        # Вставка данных
-        try:
-            db.bulk_insert_mappings(Curriculum, curriculum_data)
-            db.commit()
-            logger.info(f"Успешно импортировано {len(curriculum_data)} дисциплин")
-        except Exception as e:
-            db.rollback()
-            logger.error(f"Ошибка при вставке данных: {str(e)}", exc_info=True)
-            raise HTTPException(
-                status_code=500, detail=f"Ошибка базы данных при импорте: {str(e)}"
-            )
-
-        # Очистка
-        background_tasks.add_task(
-            lambda: os.remove(file_path) if os.path.exists(file_path) else None
-        )
-
-        return {
-            "status": "success",
-            "imported_count": len(curriculum_data),
-            "program_id": program.program_id,
-            "program_name": program.program_name,
-            "details": {
-                "disciplines": [d["discipline"] for d in curriculum_data[:3]] + ["..."],
-                "departments": list(set(d["department"] for d in curriculum_data)),
-            },
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Критическая ошибка импорта: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=500, detail=f"Внутренняя ошибка сервера: {str(e)}"
-        )
-
 
 
 
@@ -862,3 +807,47 @@ def import_education_programs(file_path: str, db: Session):
     except Exception as e:
         db.rollback()
         raise RuntimeError(f"Ошибка импорта образовательных программ: {e}")
+
+
+
+
+
+def link_teachers_to_disciplines(db: Session):
+    """
+    Сопоставляет преподавателей с дисциплинами на основе данных из столбца disciplines_raw.
+    """
+    teachers = db.query(Teacher).all()
+
+    for teacher in teachers:
+        if not teacher.disciplines_raw:
+            print(f"Преподаватель {teacher.full_name} не имеет указанных дисциплин.")
+            continue
+
+        # Разделяем дисциплины из disciplines_raw
+        discipline_names = [d.strip() for d in teacher.disciplines_raw.split(";") if d.strip()]
+
+        for discipline_name in discipline_names:
+            # Ищем дисциплину в таблице Curriculum
+            discipline = db.query(Curriculum).filter(
+                func.lower(Curriculum.discipline) == func.lower(discipline_name)
+            ).first()
+
+            if not discipline:
+                print(f"Дисциплина '{discipline_name}' не найдена для преподавателя {teacher.full_name}.")
+                continue
+
+            # Проверяем, есть ли уже связь в таблице TaughtDiscipline
+            if not db.query(TaughtDiscipline).filter_by(
+                teacher_id=teacher.teacher_id,
+                curriculum_id=discipline.curriculum_id
+            ).first():
+                # Создаем связь
+                link = TaughtDiscipline(
+                    teacher_id=teacher.teacher_id,
+                    curriculum_id=discipline.curriculum_id
+                )
+                db.add(link)
+                db.commit()
+                print(f"Связь добавлена: Преподаватель {teacher.full_name} -> Дисциплина {discipline.discipline}")
+            else:
+                print(f"Связь уже существует: Преподаватель {teacher.full_name} -> Дисциплина {discipline.discipline}")

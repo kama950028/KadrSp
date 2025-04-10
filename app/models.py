@@ -34,6 +34,7 @@ class Teacher(Base):
     total_experience = Column(Integer)  # Общий стаж работы (в годах)
     teaching_experience = Column(Integer)  # Педагогический стаж (в годах)
     professional_experience = Column(Integer)  # Профессиональный стаж (в годах)
+    disciplines_raw = Column(Text)  # Дисциплины, которые ведет преподаватель (в формате JSON)
 
     # Связи
     qualifications = relationship("Qualification", back_populates="teacher", cascade="all, delete", lazy="selectin")
@@ -80,17 +81,6 @@ class EducationProgram(Base):
     teachers = relationship("Teacher", secondary=teacher_program_association, back_populates="programs", lazy="selectin")
     curriculum = relationship("Curriculum", back_populates="program")  # Связь с учебными планами
 
-
-# Таблица преподаваемых дисциплин
-# class TaughtDiscipline(Base):
-#     __tablename__ = "taught_disciplines"
-
-#     discipline_id = Column(Integer, primary_key=True, index=True)  # Уникальный идентификатор дисциплины
-#     teacher_id = Column(Integer, ForeignKey('teachers.teacher_id', ondelete="CASCADE"), nullable=False)  # Связь с преподавателем
-#     discipline_name = Column(String(255), nullable=False)  # Название дисциплины
-
-#     teacher = relationship("Teacher", back_populates="disciplines", lazy="selectin")
-#     curriculum = relationship("Curriculum", back_populates="teachers")
 
 class TaughtDiscipline(Base):
     __tablename__ = "taught_disciplines"
