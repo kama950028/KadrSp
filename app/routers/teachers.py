@@ -1,5 +1,5 @@
 from typing import List
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from app.models import Teacher, Qualification, Curriculum
 from app.services.import_utils import (

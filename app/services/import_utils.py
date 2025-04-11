@@ -323,7 +323,18 @@ def import_curriculum(
 
         # Проверяем, существует ли программа с таким short_name
         program = db.query(EducationProgram).filter_by(short_name=short_name).first()
-        if not program:
+        if program:
+            # Удаляем связанные данные, если программа уже существует
+            db.query(Curriculum).filter_by(program_id=program.program_id).delete()
+            db.query(TaughtDiscipline).filter(
+                TaughtDiscipline.curriculum_id.in_(
+                    db.query(Curriculum.curriculum_id).filter_by(program_id=program.program_id)
+                )
+            ).delete()
+            db.commit()
+            print(f"Старые данные для программы {short_name} удалены.")
+
+        else:
             # Добавляем новую образовательную программу
             program = EducationProgram(
                 program_name="",  # Оставляем пустым
@@ -334,16 +345,6 @@ def import_curriculum(
             db.commit()
             db.refresh(program)
             print(f"Добавлена новая образовательная программа: {short_name} ({year})")
-
-        # Диагностика перед парсингом
-        try:
-            # Пробуем прочитать файл для диагностики
-            diagnostic_df = pd.read_excel(file_path, sheet_name=None, nrows=1)
-            print("Диагностика файла:")
-            for sheet_name, df in diagnostic_df.items():
-                print(f"Лист '{sheet_name}': колонки - {df.columns.tolist()}")
-        except Exception as e:
-            logger.warning(f"Диагностика файла не удалась: {str(e)}")
 
         # Парсинг данных
         try:
@@ -417,7 +418,7 @@ def import_curriculum(
 from collections import defaultdict
 
 
-def parse_semester(exam_value, test_value):
+def parse_semester(exam_value, test_value, diff_value):
     """Извлекает номера семестров, объединяя значения через запятую."""
     semesters = []
     
@@ -441,6 +442,10 @@ def parse_semester(exam_value, test_value):
     test_sem = parse_value(test_value)
     if test_sem is not None:
         semesters.append(str(test_sem))
+
+    diff_sem = parse_value(diff_value)
+    if diff_sem is not None:
+        semesters.append(str(diff_sem))
     
     # Возвращаем объединенные значения через запятую или None
     return ", ".join(semesters) if semesters else None
@@ -455,9 +460,23 @@ def parse_excel(file_path: str) -> List[Dict]:
     try:
         print(f"\n{'='*50}\nНачало обработки файла: {file_path}\n{'='*50}")
 
-        # 1. Чтение и анализ структуры файла
-        xls = pd.ExcelFile(file_path)
-        print(f"Листы в файле: {xls.sheet_names}")
+        # Проверка существования файла
+        if not os.path.exists(file_path):
+            raise ValueError(f"Файл не найден: {file_path}")
+        
+        # Проверка формата файла
+        if not file_path.lower().endswith(('.xlsx', '.xls')):
+            raise ValueError(f"Некорректный формат файла: {file_path}")
+
+        # Чтение файла Excel
+        try:
+            xls = pd.ExcelFile(file_path)
+            print(f"Листы в файле: {xls.sheet_names}")
+        except ValueError as e:
+            raise ValueError(f"Ошибка чтения файла Excel: {str(e)}")
+        except Exception as e:
+            raise ValueError(f"Неизвестная ошибка при чтении файла: {str(e)}")
+        
 
         # 2. Определение основных колонок в ПланСвод
         df_svod = pd.read_excel(xls, sheet_name="ПланСвод", header=None, nrows=5)
@@ -510,7 +529,7 @@ def parse_excel(file_path: str) -> List[Dict]:
         for col in df_plan.columns:
             col_name = str(col)
             current_course = col_name
-            print(f"col_name: {col_name} current_course: {current_course}")
+            # print(f"col_name: {col_name} current_course: {current_course}")
 
             # if "курс" in col_name.lower():
             #     current_course = col_name
@@ -531,7 +550,7 @@ def parse_excel(file_path: str) -> List[Dict]:
                 course_blocks[current_course]["lab_col"] = col
             elif "крпа" in col_name.lower():
                 course_blocks[current_course]["krpa_col"] = col
-                print(f"Найден столбец 'КрПА': {col_name}")
+                
             
 
         print("\nОбнаруженные блоки курсов:")
@@ -541,17 +560,22 @@ def parse_excel(file_path: str) -> List[Dict]:
          # 4. Автопоиск колонок для семестров
         exam_col = next((col for col in df_plan.columns if "экза" in str(col).lower()), None)
         test_col = next((col for col in df_plan.columns if "зачет" in str(col).lower()), None)
+        diff_col = next((col for col in df_plan.columns if "зачет с оц" in str(col).lower()), None)
+        kr_rab_col = next((col for col in df_plan.columns if "кр" in str(col).lower().replace(" ", "")), None)
         
-    
+        if not kr_rab_col:
+            raise ValueError("Столбец 'кр' не найден в df_plan")
+        else:
+            print(f"Найден столбец 'кр': {kr_rab_col}")
         
 
-        if not exam_col or not test_col:
+        if not exam_col or not test_col or not diff_col or not kr_rab_col:
             available_cols = ", ".join(df_plan.columns)
             raise ValueError(
-                f"Не найдены колонки с экзаменами и зачетами. Доступные колонки: {available_cols}"
+                f"Не найдены колонки с экзаменами, зачетами и дифф. зачетами. Доступные колонки: {available_cols}"
             )
 
-        print(f"Найдены колонки: Экзамен - '{exam_col}', Зачет - '{test_col}'")
+        print(f"Найдены колонки: Экзамен - '{exam_col}', Зачет - '{test_col}', Дифф. зачет - '{diff_col}', КР - '{kr_rab_col}'")
 
         # 5. Обработка данных
         result = []
@@ -576,7 +600,8 @@ def parse_excel(file_path: str) -> List[Dict]:
             
             exam_value = row.get(exam_col, None)
             test_value = row.get(test_col, None)
-            semesters = parse_semester(exam_value, test_value)
+            diff_value = row.get(diff_col, None)
+            semesters = parse_semester(exam_value, test_value, diff_value)
 
             # Поиск дисциплины в листе План
             hours_data = None
@@ -593,14 +618,31 @@ def parse_excel(file_path: str) -> List[Dict]:
             lab_hours = 0.0
             exam_hours = 0.0
             test_hours = 0.0
+            final_work_hours = 0.0
+            course_project_hours = 0.0
+
 
             for course, blocks in course_blocks.items():
                 try:
+                    kr_rab_col = blocks.get("kr_rab_col")
+                    if kr_rab_col and hours_data is not None and kr_rab_col in hours_data:
+                        kr_rab_value = hours_data[kr_rab_col]
+                        course_project_hours = float(2.0) if pd.notna(kr_rab_value) and str(kr_rab_value).strip() else 0.0
+                    else:
+                        course_project_hours = 0.0
+                    
+                    
                     # Получение значения krpa_value из соответствующего столбца
+                    vkr_col = blocks.get("krpa_col")
+                    vkr_value = hours_data[vkr_col] if (vkr_col and hours_data is not None and vkr_col in hours_data) else 0.0
+                    final_work_hours = float(vkr_value - 1.5) if pd.notna(vkr_value) else 0.0
+
+                    
+                    
                     krpa_col = blocks.get("krpa_col")
                     krpa_value = hours_data[krpa_col] if (krpa_col and hours_data is not None and krpa_col in hours_data) else 0.0
                     if "практика" in discipline.lower():    
-                        print(f"Значение 'КрПА' для дисциплины '{discipline}': {krpa_value}")
+                        # print(f"Значение 'КрПА' для дисциплины '{discipline}': {krpa_value}")
                         practice_hours += float(krpa_value) if pd.notna(krpa_value) else 0.0
 
                     if "lecture_col" in blocks:
@@ -618,9 +660,9 @@ def parse_excel(file_path: str) -> List[Dict]:
                             else 0
                         )
                         if "практика" in discipline.lower():
-                            print(f"Условие сработало для дисциплины '{discipline}'. Значение КрПА: {krpa_value}")
-                            practice_hours = float(krpa_value) if pd.notna(krpa_value) else 0.0
-                            print(f"Присвоено practice_hours: {practice_hours}")
+                            # print(f"Условие сработало для дисциплины '{discipline}'. Значение КрПА: {krpa_value}")
+                            practice_hours += float(krpa_value) if pd.notna(krpa_value) else 0.0
+                            # print(f"Присвоено practice_hours: {practice_hours}")
                         else:
                             practice_hours += float(val) if pd.notna(val) else 0
                             # print(f"Присвоено practice_hours из practice_col: {practice_hours}")
@@ -632,7 +674,10 @@ def parse_excel(file_path: str) -> List[Dict]:
                             if hours_data is not None
                             else 0
                         )
-                        exam_hours = 2.35 if pd.notna(exam_value) and str(exam_value).strip() not in ["", "nan"] else 0.0
+                        if "защита" in discipline.lower():
+                            exam_hours = 0
+                        else:
+                            exam_hours = 2.35 if pd.notna(exam_value) and str(exam_value).strip() not in ["", "nan"] else 0.0
 
                     if "test_col" in blocks:
                         val = (
@@ -662,13 +707,16 @@ def parse_excel(file_path: str) -> List[Dict]:
                 "lab_hours": lab_hours,
                 "exam_hours": exam_hours,
                 "test_hours": test_hours,
-                "total_practice_hours": lecture_hours + practice_hours + lab_hours + exam_hours + test_hours,
+                "final_work_hours": final_work_hours,
+                "course_project_hours": course_project_hours,
+                "total_practice_hours": lecture_hours + practice_hours + lab_hours + exam_hours + test_hours + final_work_hours + course_project_hours,
             }
-            if "практика" in discipline.lower():
+            # if "защита" in discipline.lower():
+            if course_project_hours > 0 :
                 print(f"\nДисциплина: {discipline}")
                 print(f"Кафедра: {department}")
                 print(f"Часы: лекции={lecture_hours}, практики={practice_hours}, лабы={lab_hours}")
-                print(f"Часы: экзамен={exam_hours}, зачет={test_hours}")
+                print(f"Часы: экзамен={exam_hours}, зачет={test_hours}, ВКР ={final_work_hours}, КР ={course_project_hours}")
                 print(f"Всего часов: {item['total_practice_hours']}")
                 print(f"Семестр: {semesters if semesters else 'Не указан'}")
             
@@ -687,22 +735,6 @@ def parse_excel(file_path: str) -> List[Dict]:
         print(f"\n{'!'*50}\nОшибка при обработке файла: {str(e)}\n{'!'*50}")
         logger.error(f"Ошибка парсинга Excel: {str(e)}", exc_info=True)
         raise ValueError(f"Ошибка чтения файла: {str(e)}")
-
-
-
-
-
-# def safe_convert(value, convert_func, default):
-#     try:
-#         # Проверка на строку 'nan'
-#         if str(value).strip().lower() == "nan":
-#             return default
-#         if pd.isna(value) or str(value).strip() in ("", "-", "н/д"):
-#             return default
-#         return convert_func(value)
-#     except (ValueError, TypeError) as e:
-#         logger.warning(f"Ошибка преобразования значения {value}: {e}")
-#         return default
 
 
 

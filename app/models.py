@@ -111,6 +111,8 @@ class Curriculum(Base):
     program_id = Column(Integer, ForeignKey('education_programs.program_id'))  # Связь с образовательной программой
     
     program = relationship("EducationProgram", back_populates="curriculum")  # Связь с образовательной программой
+    teachers = relationship("Teacher", secondary="taught_disciplines", back_populates="curriculum", overlaps="taught_disciplines")
+    taught_disciplines = relationship("TaughtDiscipline", back_populates="curriculum", overlaps="teachers")
     
     # Добавляем связь с преподавателями через таблицу TaughtDiscipline
     @property

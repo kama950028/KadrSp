@@ -51,7 +51,7 @@
                                 <th>Практики</th>
                                 <th>Экзамен</th>
                                 <th>Зачет</th>
-                                <th>Преподаватели</th>
+                                <th>Сумма часов</th>
                             </tr>
                         </thead>
                         <tbody id="curriculumBody"></tbody>
@@ -160,7 +160,7 @@
                         <td>${item.practice_hours || '0'}</td>
                         <td>${item.exam_hours || 'Нет'}</td>
                         <td>${item.test_hours || 'Нет'}</td>
-                        <td>${item.teachers?.length ? item.teachers.map(t => t.full_name).join(', ') : 'Не назначены'}</td>
+                        <td>${item.total_practice_hours || '0'}</td>
                     `;
                     elements.body.appendChild(row);
                 });

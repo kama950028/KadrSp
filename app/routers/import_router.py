@@ -8,6 +8,8 @@ import os
 import uuid
 import zipfile
 from io import BytesIO 
+import time
+import tempfile
 
 router = APIRouter(prefix="/import", tags=["import"])
 
@@ -29,6 +31,31 @@ def process_import(file_path: str, db: Session):
         # Удаляем временный файл
         os.remove(file_path)
 
+# def safe_remove(file_path):
+#     try:
+#         if os.path.exists(file_path):
+#             os.remove(file_path)
+#             print(f"Файл {file_path} успешно удалён.")
+#     except PermissionError as e:
+#         print(f"Не удалось удалить файл {file_path}: {e}")
+#     except Exception as e:
+#         print(f"Ошибка при удалении файла {file_path}: {e}")
+
+def safe_remove_with_retry(file_path, max_retries=5, delay=1):
+    for attempt in range(max_retries):
+        try:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+                print(f"Файл {file_path} успешно удалён на попытке {attempt + 1}.")
+            return
+        except PermissionError as e:
+            print(f"Попытка {attempt + 1}: Не удалось удалить файл {file_path}: {e}")
+            if attempt < max_retries - 1:
+                time.sleep(delay)
+        except Exception as e:
+            print(f"Ошибка при удалении файла {file_path}: {e}")
+            break
+    print(f"Не удалось удалить файл {file_path} после {max_retries} попыток.")
 
 @router.post("/upload-curriculum")
 async def upload_curriculum_endpoint(
@@ -37,13 +64,12 @@ async def upload_curriculum_endpoint(
     db: Session = Depends(get_db)
 ):
     try:
-        # Сохранение файла
-        temp_path = f"temp_{uuid.uuid4()}.xlsx"
-        with open(temp_path, "wb") as buffer:
-            content = await file.read()
-            buffer.write(content)
+        # Создаём временный файл
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as temp_file:
+            temp_file.write(await file.read())
+            temp_path = temp_file.name  # Получаем путь к временному файлу
 
-        # Синхронный вызов импорта
+        # Обрабатываем файл
         result = import_curriculum(
             file_path=temp_path,
             filename=file.filename,
@@ -51,35 +77,14 @@ async def upload_curriculum_endpoint(
             background_tasks=background_tasks
         )
 
+        # Добавляем задачу удаления файла в фоновые задачи
+        # background_tasks.add_task(safe_remove, temp_path)
+        background_tasks.add_task(safe_remove_with_retry, temp_path)
+
         return JSONResponse(content=result, status_code=200)
-    
+
     except Exception as e:
         raise HTTPException(500, detail=str(e))
-
-
-# @router.post("/upload-curriculum")
-# async def upload_curriculum(
-#     file: UploadFile = File(...), 
-#     db: Session = Depends(get_db)
-# ):
-#     if not file.filename.endswith('.xlsx'):
-#         raise HTTPException(400, "Invalid file format")
-    
-#     temp_file = f"temp_{file.filename}"
-#     with open(temp_file, "wb") as buffer:
-#         buffer.write(await file.read())
-    
-#     try:
-#         data = parse_excel(temp_file)
-#         import_curriculum(db, data)
-#     except Exception as e:
-#         raise HTTPException(500, f"Import error: {str(e)}")
-#     finally:
-#         os.remove(temp_file)
-    
-#     return {"message": f"Successfully imported {len(data)} records"}
-
-
 
 @router.post("/teachers/import")
 def import_teachers(file: UploadFile = File(...), db: Session = Depends(get_db)):
@@ -89,43 +94,19 @@ def import_teachers(file: UploadFile = File(...), db: Session = Depends(get_db))
     if not file.filename.endswith(".docx"):
         raise HTTPException(status_code=400, detail="Поддерживаются только файлы .docx")
 
-    # Сохраняем временный файл
-    temp_file = f"temp_{file.filename}"
-    with open(temp_file, "wb") as buffer:
-        buffer.write(file.file.read())
-
     try:
+        # Создаём временный файл
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as temp_file:
+            temp_file.write(file.file.read())
+            temp_path = temp_file.name  # Получаем путь к временному файлу
+
         # Парсим данные из файла
-        teachers_data = parse_docx(temp_file)
+        teachers_data = parse_docx(temp_path)
         import_teachers_with_programs(db, teachers_data)
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ошибка импорта преподавателей: {str(e)}")
     finally:
-        os.remove(temp_file)
+        safe_remove(temp_path)  # Удаляем временный файл
 
     return {"message": "Преподаватели успешно импортированы"}
-
-# @router.post("/teachers")
-# async def import_teachers_from_docx(
-#     background_tasks: BackgroundTasks,
-#     file: UploadFile = File(...),
-#     db: Session = Depends(get_db)
-# ):
-#     if not file.filename.endswith(".docx"):
-#         raise HTTPException(400, "Только .docx файлы поддерживаются")
-
-#     # Сохраняем файл временно
-#     temp_dir = "temp"
-#     os.makedirs(temp_dir, exist_ok=True)
-#     temp_path = f"{temp_dir}/{uuid.uuid4()}.docx"
-    
-#     with open(temp_path, "wb") as buffer:
-#         buffer.write(await file.read())
-
-#     # Парсинг и импорт в фоне
-#     background_tasks.add_task(process_import, temp_path, db)
-    
-#     return JSONResponse(
-#         content={"message": "Файл принят в обработку"},
-#         status_code=202
-#     )
