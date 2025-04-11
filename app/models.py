@@ -113,9 +113,6 @@ class Curriculum(Base):
     program = relationship("EducationProgram", back_populates="curriculum")  # Связь с образовательной программой
     
     # Добавляем связь с преподавателями через таблицу TaughtDiscipline
-    teachers = relationship("Teacher", secondary="taught_disciplines", back_populates="curriculum", lazy="joined", overlaps="taught_disciplines,curriculum")
-    taught_disciplines = relationship("TaughtDiscipline", back_populates="curriculum", overlaps="teachers,disciplines")
-    
     @property
     def program_short_name(self):
         return self.program.short_name if self.program else None

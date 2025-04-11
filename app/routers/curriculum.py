@@ -12,7 +12,7 @@ import logging
 from pathlib import Path
 import os
 from sqlalchemy import func
-from app.services.import_utils import link_teachers_to_disciplines
+# from app.services.import_utils import link_teachers_to_disciplines
 
 templates = Jinja2Templates(directory="app/templates")
 

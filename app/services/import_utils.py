@@ -13,7 +13,7 @@ import pandas as pd
 from sqlalchemy.dialects.postgresql import insert
 from io import BytesIO
 import traceback
-from fastapi import HTTPException, UploadFile, BackgroundTasks
+from fastapi import HTTPException, UploadFile, BackgroundTasks, logger
 from sqlalchemy.orm import Session
 from sqlalchemy import func, and_
 import pandas as pd
@@ -23,6 +23,8 @@ from datetime import datetime
 from typing import List, Dict
 from app.models import Curriculum, EducationProgram
 import logging
+
+logger = logging.getLogger(__name__)
 
 def parse_docx(file_path: str):
     doc = Document(file_path)
@@ -292,7 +294,7 @@ def import_curriculum(
 ):
     """
     Улучшенная функция импорта учебного плана.
-    Включает расширенную диагностику и обработку ошибок.
+    Извлекает short_name и year из имени файла и добавляет их в таблицу education_programs.
     """
     try:
         # Проверка файла
@@ -304,6 +306,34 @@ def import_curriculum(
                 status_code=400,
                 detail="Поддерживаются только файлы Excel (.xlsx, .xls)",
             )
+
+        # Извлечение short_name и year из имени файла
+        try:
+            match = re.match(r"(.+?)_(\d{4})\.xlsx", filename)
+            if not match:
+                raise ValueError("Некорректное имя файла. Ожидается формат: КОД_ПРОФИЛЬ_ГОД.xlsx")
+            short_name = match.group(1)  # Извлекаем часть до года
+            year = int(match.group(2))  # Извлекаем год
+            short_name = f"{short_name}_{year}"  # Добавляем год в short_name
+        except Exception as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Ошибка извлечения short_name и year из имени файла: {str(e)}",
+            )
+
+        # Проверяем, существует ли программа с таким short_name
+        program = db.query(EducationProgram).filter_by(short_name=short_name).first()
+        if not program:
+            # Добавляем новую образовательную программу
+            program = EducationProgram(
+                program_name="",  # Оставляем пустым
+                short_name=short_name,
+                year=year,
+            )
+            db.add(program)
+            db.commit()
+            db.refresh(program)
+            print(f"Добавлена новая образовательная программа: {short_name} ({year})")
 
         # Диагностика перед парсингом
         try:
@@ -333,42 +363,7 @@ def import_curriculum(
                 detail="Файл не содержит данных для импорта. Проверьте формат файла.",
             )
 
-        # Определение программы
-        try:
-            program_code = filename.split("_")[0]
-            program = (
-                db.query(EducationProgram)
-                .filter(EducationProgram.short_name.ilike(f"{program_code}%"))
-                .first()
-            )
-
-            if not program:
-                available_programs = db.query(EducationProgram.short_name).all()
-                raise HTTPException(
-                    status_code=404,
-                    detail={
-                        "message": f"Программа с кодом {program_code} не найдена",
-                        "available_programs": [
-                            p[0] for p in available_programs if p[0]
-                        ],
-                        "filename_pattern": "Ожидается формат: КОД_ПРОФИЛЬ_ИНСТИТУТ_ГОД.xlsx",
-                    },
-                )
-        except IndexError:
-            raise HTTPException(
-                status_code=400,
-                detail="Некорректное имя файла. Ожидается формат: КОД_ПРОФИЛЬ_ИНСТИТУТ_ГОД.xlsx",
-            )
-
-        # # Очистка старых данных
-        # deleted_count = (
-        #     db.query(Curriculum)
-        #     .filter(Curriculum.program_id == program.program_id)
-        #     .delete(synchronize_session=False)
-        # )
-        # logger.info(f"Удалено {deleted_count} старых записей учебного плана")
-
-        # Подготовка данных
+        # Привязка данных к программе
         for item in curriculum_data:
             item["program_id"] = program.program_id
             item["semester"] = item.get("semester") or None
@@ -418,22 +413,6 @@ def import_curriculum(
         raise HTTPException(
             status_code=500, detail=f"Внутренняя ошибка сервера: {str(e)}"
         )
-
-
-
-logger = logging.getLogger(__name__)
-
-
-def safe_convert(value, convert_func, default):
-    """Безопасное преобразование значений"""
-    try:
-        if pd.isna(value) or str(value).strip() in ("", "-", "н/д"):
-            return default
-        return convert_func(value)
-    except (ValueError, TypeError) as e:
-        logger.warning(f"Ошибка преобразования значения {value}: {e}")
-        return default
-
 
 from collections import defaultdict
 
@@ -550,6 +529,10 @@ def parse_excel(file_path: str) -> List[Dict]:
                 course_blocks[current_course]["practice_col"] = col
             elif "лаб" in col_name.lower():
                 course_blocks[current_course]["lab_col"] = col
+            elif "крпа" in col_name.lower():
+                course_blocks[current_course]["krpa_col"] = col
+                print(f"Найден столбец 'КрПА': {col_name}")
+            
 
         print("\nОбнаруженные блоки курсов:")
         for course, blocks in course_blocks.items():
@@ -558,6 +541,9 @@ def parse_excel(file_path: str) -> List[Dict]:
          # 4. Автопоиск колонок для семестров
         exam_col = next((col for col in df_plan.columns if "экза" in str(col).lower()), None)
         test_col = next((col for col in df_plan.columns if "зачет" in str(col).lower()), None)
+        
+    
+        
 
         if not exam_col or not test_col:
             available_cols = ", ".join(df_plan.columns)
@@ -592,7 +578,6 @@ def parse_excel(file_path: str) -> List[Dict]:
             test_value = row.get(test_col, None)
             semesters = parse_semester(exam_value, test_value)
 
-
             # Поиск дисциплины в листе План
             hours_data = None
             if discipline_col_plan in df_plan.columns:
@@ -611,6 +596,13 @@ def parse_excel(file_path: str) -> List[Dict]:
 
             for course, blocks in course_blocks.items():
                 try:
+                    # Получение значения krpa_value из соответствующего столбца
+                    krpa_col = blocks.get("krpa_col")
+                    krpa_value = hours_data[krpa_col] if (krpa_col and hours_data is not None and krpa_col in hours_data) else 0.0
+                    if "практика" in discipline.lower():    
+                        print(f"Значение 'КрПА' для дисциплины '{discipline}': {krpa_value}")
+                        practice_hours += float(krpa_value) if pd.notna(krpa_value) else 0.0
+
                     if "lecture_col" in blocks:
                         val = (
                             hours_data[blocks["lecture_col"]]
@@ -625,7 +617,14 @@ def parse_excel(file_path: str) -> List[Dict]:
                             if hours_data is not None
                             else 0
                         )
-                        practice_hours += float(val) if pd.notna(val) else 0
+                        if "практика" in discipline.lower():
+                            print(f"Условие сработало для дисциплины '{discipline}'. Значение КрПА: {krpa_value}")
+                            practice_hours = float(krpa_value) if pd.notna(krpa_value) else 0.0
+                            print(f"Присвоено practice_hours: {practice_hours}")
+                        else:
+                            practice_hours += float(val) if pd.notna(val) else 0
+                            # print(f"Присвоено practice_hours из practice_col: {practice_hours}")
+
 
                     if "exam_col" in blocks:
                         val = (
@@ -633,7 +632,7 @@ def parse_excel(file_path: str) -> List[Dict]:
                             if hours_data is not None
                             else 0
                         )
-                        exam_hours = int(val) if pd.notna(val) else 0
+                        exam_hours = 2.35 if pd.notna(exam_value) and str(exam_value).strip() not in ["", "nan"] else 0.0
 
                     if "test_col" in blocks:
                         val = (
@@ -641,7 +640,7 @@ def parse_excel(file_path: str) -> List[Dict]:
                             if hours_data is not None
                             else 0
                         )
-                        test_hours = int(val) if pd.notna(val) else 0
+                        test_hours = 0.25 if pd.notna(test_value) and str(test_value).strip() not in ["", "nan"] else 0.0
 
                     if "lab_col" in blocks:
                         val = (
@@ -650,6 +649,7 @@ def parse_excel(file_path: str) -> List[Dict]:
                             else 0
                         )
                         lab_hours += float(val) if pd.notna(val) else 0
+
                 except (ValueError, TypeError):
                     continue
 
@@ -659,17 +659,18 @@ def parse_excel(file_path: str) -> List[Dict]:
                 "semester": semesters,
                 "lecture_hours": lecture_hours,
                 "practice_hours": practice_hours,
-                "exam_ours": exam_hours,
                 "lab_hours": lab_hours,
-                "exam_hours": 0.0,
+                "exam_hours": exam_hours,
                 "test_hours": test_hours,
-                "total_practice_hours": lecture_hours + practice_hours + lab_hours,
+                "total_practice_hours": lecture_hours + practice_hours + lab_hours + exam_hours + test_hours,
             }
-
-            print(f"\nДисциплина: {discipline}")
-            print(f"Кафедра: {department}")
-            print(f"Часы: лекции={lecture_hours}, практики={practice_hours}, лабы={lab_hours}")
-            print(f"Семестр: {semesters if semesters else 'Не указан'}")
+            if "практика" in discipline.lower():
+                print(f"\nДисциплина: {discipline}")
+                print(f"Кафедра: {department}")
+                print(f"Часы: лекции={lecture_hours}, практики={practice_hours}, лабы={lab_hours}")
+                print(f"Часы: экзамен={exam_hours}, зачет={test_hours}")
+                print(f"Всего часов: {item['total_practice_hours']}")
+                print(f"Семестр: {semesters if semesters else 'Не указан'}")
             
 
             result.append(item)
@@ -691,17 +692,18 @@ def parse_excel(file_path: str) -> List[Dict]:
 
 
 
-def safe_convert(value, convert_func, default):
-    try:
-        # Проверка на строку 'nan'
-        if str(value).strip().lower() == "nan":
-            return default
-        if pd.isna(value) or str(value).strip() in ("", "-", "н/д"):
-            return default
-        return convert_func(value)
-    except (ValueError, TypeError) as e:
-        logger.warning(f"Ошибка преобразования значения {value}: {e}")
-        return default
+# def safe_convert(value, convert_func, default):
+#     try:
+#         # Проверка на строку 'nan'
+#         if str(value).strip().lower() == "nan":
+#             return default
+#         if pd.isna(value) or str(value).strip() in ("", "-", "н/д"):
+#             return default
+#         return convert_func(value)
+#     except (ValueError, TypeError) as e:
+#         logger.warning(f"Ошибка преобразования значения {value}: {e}")
+#         return default
+
 
 
 def check_duplicates_in_csv(file_path: str):
@@ -812,42 +814,42 @@ def import_education_programs(file_path: str, db: Session):
 
 
 
-def link_teachers_to_disciplines(db: Session):
-    """
-    Сопоставляет преподавателей с дисциплинами на основе данных из столбца disciplines_raw.
-    """
-    teachers = db.query(Teacher).all()
+# def link_teachers_to_disciplines(db: Session):
+#     """
+#     Сопоставляет преподавателей с дисциплинами на основе данных из столбца disciplines_raw.
+#     """
+#     teachers = db.query(Teacher).all()
 
-    for teacher in teachers:
-        if not teacher.disciplines_raw:
-            print(f"Преподаватель {teacher.full_name} не имеет указанных дисциплин.")
-            continue
+#     # for teacher in teachers:
+#     #     if not teacher.disciplines_raw:
+#     #         print(f"Преподаватель {teacher.full_name} не имеет указанных дисциплин.")
+#     #         continue
 
-        # Разделяем дисциплины из disciplines_raw
-        discipline_names = [d.strip() for d in teacher.disciplines_raw.split(";") if d.strip()]
+#         # Разделяем дисциплины из disciplines_raw
+#         discipline_names = [d.strip() for d in teacher.disciplines_raw.split(";") if d.strip()]
 
-        for discipline_name in discipline_names:
-            # Ищем дисциплину в таблице Curriculum
-            discipline = db.query(Curriculum).filter(
-                func.lower(Curriculum.discipline) == func.lower(discipline_name)
-            ).first()
+#         for discipline_name in discipline_names:
+#             # Ищем дисциплину в таблице Curriculum
+#             discipline = db.query(Curriculum).filter(
+#                 func.lower(Curriculum.discipline) == func.lower(discipline_name)
+#             ).first()
 
-            if not discipline:
-                print(f"Дисциплина '{discipline_name}' не найдена для преподавателя {teacher.full_name}.")
-                continue
+#             if not discipline:
+#                 print(f"Дисциплина '{discipline_name}' не найдена для преподавателя {teacher.full_name}.")
+#                 continue
 
-            # Проверяем, есть ли уже связь в таблице TaughtDiscipline
-            if not db.query(TaughtDiscipline).filter_by(
-                teacher_id=teacher.teacher_id,
-                curriculum_id=discipline.curriculum_id
-            ).first():
-                # Создаем связь
-                link = TaughtDiscipline(
-                    teacher_id=teacher.teacher_id,
-                    curriculum_id=discipline.curriculum_id
-                )
-                db.add(link)
-                db.commit()
-                print(f"Связь добавлена: Преподаватель {teacher.full_name} -> Дисциплина {discipline.discipline}")
-            else:
-                print(f"Связь уже существует: Преподаватель {teacher.full_name} -> Дисциплина {discipline.discipline}")
+#             # Проверяем, есть ли уже связь в таблице TaughtDiscipline
+#             if not db.query(TaughtDiscipline).filter_by(
+#                 teacher_id=teacher.teacher_id,
+#                 curriculum_id=discipline.curriculum_id
+#             ).first():
+#                 # Создаем связь
+#                 link = TaughtDiscipline(
+#                     teacher_id=teacher.teacher_id,
+#                     curriculum_id=discipline.curriculum_id
+#                 )
+#                 db.add(link)
+#                 db.commit()
+#                 print(f"Связь добавлена: Преподаватель {teacher.full_name} -> Дисциплина {discipline.discipline}")
+#             else:
+#                 print(f"Связь уже существует: Преподаватель {teacher.full_name} -> Дисциплина {discipline.discipline}")

@@ -3,13 +3,24 @@ import csv
 import re
 
 def generate_short_name(program_name, year):
-    # Логика формирования short_name: Код_Профиль_Год
+    """
+    Формирует short_name: Код_Профиль_Год.
+    Исключает союзы (например, "и", "или") из профиля.
+    """
     match = re.match(r"(\d{2}\.\d{2}\.\d{2}) (.+?) \((.+)\)", program_name)
     if match:
         code = match.group(1)  # Код программы
         profile = match.group(3)  # Профиль программы
-        short_name = f"{code}_{profile[:3].upper()}_{year}"  # Берем первые 3 буквы профиля и добавляем год
+
+        # Исключаем союзы
+        stop_words = {"и", "или", "a", "но"}
+        profile_words = [word for word in profile.split() if word.lower() not in stop_words]
+
+        # Берём первые буквы каждого слова
+        profile_initials = "".join(word[0].upper() for word in profile_words)
+        short_name = f"{code}_{profile_initials}_{year}"
         return short_name
+
     print(f"Не удалось сформировать short_name для: {program_name}")  # Отладочный вывод
     return "Unknown"
 
